@@ -107,32 +107,23 @@ class Hourglass(nn.Module):
     def __init__(self, block, num_blocks, planes, depth): # planes : channels
         super(Hourglass, self).__init__()
         self.depth = depth
-        # self.upsample = F.interpolate(scale_factor=2)
         self.hg = self._make_hour_glass(block, num_blocks, planes, depth)
-
-    def _make_residual(self, block, num_blocks, planes):
-        layers = []
-        for i in range(0, num_blocks):
-            layers.append(block(planes, int(planes / block.expansion)))      # output channel: planes (n_joints / n_paf)
-        return nn.ModuleList(layers)
 
     def _make_hour_glass(self, block, num_blocks, planes, depth):
         hg = []
         for i in range(depth):
             res = []
-            for j in range(2 if i == 0 else 3):
-                res.append(self._make_residual(block, num_blocks, planes))
-
+            for _ in range(num_blocks + int(i == 0)):
+                res.append(block(planes, int(planes / block.expansion)))
             hg.append(nn.ModuleList(res))
         return nn.ModuleList(hg)
 
     def get_weights(self):
         weights = dict()
         for i, res in enumerate(self.hg):
-            for j, blocks in enumerate(res):
-                for k, block in enumerate(blocks):
-                    # store tuples (layer, weight)
-                    weights["dep{}/blocks{}/block{}".format(i, j, k)] = block.get_layer_weight_tuples()
+            for j, block in enumerate(res):
+                # store tuples (layer, weight)
+                weights["dep{}/block{}".format(i, j)] = block.get_layer_weight_tuples()
         return weights
 
     def _hour_glass_forward(self, n, x):
@@ -167,29 +158,20 @@ class CPRmodel(nn.Module):
 
         self.source = layers[1]
 
-        for i in range(n_stages - 2):
+        for _ in range(n_stages - 2):
             stage = Stage(backend_outp_feats, n_joints, n_paf, False, False, blocktype=blocktype)
-            # print(dir(stage))
-            # stage.apply(self._copy_weights)
             self._copy_weights(self.source, stage)
             layers += [stage]
         self.stages = nn.ModuleList(layers)
 
-    def __copy_weights(self, source):
-        for s_m, d_m in zip(source.modules(), self.dest.modules()):
-            if not (isinstance(d_m, nn.ReLU) or isinstance(s_m, Bottleneck)):
-                d_m.weight = s_m.weight
-
     def _copy_weights(self, source_block, dest_block):
         for b_name, b_weights in dest_block.get_weights().items():
             for i in range(HG_DEPTH):
-                for j in range(2):
-                    for k in range(HG_NUM_BLOCKS):
-                        for layer_index, l_w_t in b_weights["dep{}/blocks{}/block{}".format(i, j, k)].items():
-                            conv_layer, _ = l_w_t
-                            _, source_weight = source_block.get_weights()[b_name]["dep{}/blocks{}/block{}".format(i, j, k)][layer_index]
-                            conv_layer.weight = source_weight
-                            print("Copied weights of layer dep{}/blocks{}/block{}".format(i, j, k))
+                for j in range(HG_NUM_BLOCKS):
+                    for layer_index, l_w_t in b_weights["dep{}/block{}".format(i, j)].items():
+                        conv_layer, _ = l_w_t
+                        _, source_weight = source_block.get_weights()[b_name]["dep{}/block{}".format(i, j)][layer_index]
+                        conv_layer.weight = source_weight
 
     def forward(self, x):
         img_feats = self.backend(x)
@@ -228,7 +210,6 @@ class Stage(nn.Module):
         init(self.block2)
 
     def get_weights(self):
-        # tuples (layer, weight)
         return self.weights
 
     def get_blocks(self):
