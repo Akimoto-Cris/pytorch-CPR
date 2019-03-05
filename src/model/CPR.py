@@ -5,7 +5,8 @@ import torch
 
 NUM_JOINTS = 18
 NUM_LIMBS = 38
-
+HG_DEPTH=3
+HG_NUM_BLOCKS=2
 
 def make_paf_block_stage1(inp_feats, output_feats):
     layers = [make_standard_block(inp_feats, 128, 3),       # conv + bn + relu
@@ -27,22 +28,30 @@ def make_paf_block_stage2(inp_feats, output_feats):
     return nn.Sequential(*layers)
 
 
-def blockFactory(inp_feats, output_feats, blocktype="standard", stage1=False):
-    if stage1:
-        return make_paf_block_stage1(inp_feats, output_feats)
-    else:
-        if blocktype == "standard":
-            return make_paf_block_stage2(output_feats, output_feats)
-        elif blocktype == "hg":
-            layers = [Hourglass(Bottleneck,
-                                num_blocks=2,
-                                planes=inp_feats,
-                                depth=3),
-                      make_standard_block(inp_feats, output_feats, 1, 1, 0)
-                      ]
-            return nn.Sequential(*layers)
+class blockFactory:
+    def __init__(self, inp_feats, output_feats, blocktype="standard", stage1=False):
+        if stage1:
+            self.block = make_paf_block_stage1(inp_feats, output_feats)
         else:
-            raise Exception("Block type {} is not supported".format(blocktype))
+            if blocktype == "standard":
+                self.block = make_paf_block_stage2(output_feats, output_feats)
+            elif blocktype == "hg":
+                layers = [Hourglass(Bottleneck,
+                                    num_blocks=HG_NUM_BLOCKS,
+                                    planes=inp_feats,
+                                    depth=HG_DEPTH),
+                          make_standard_block(inp_feats, output_feats, 1, 1, 0)]
+                self.weights = layers[0].get_weights()
+                self.block = nn.Sequential(*layers)
+            else:
+                raise Exception("Block type {} is not supported".format(blocktype))
+
+    def get_weights(self):
+        # tuples (layer, weight)
+        return self.weights
+
+    def get_block(self):
+        return self.block
 
 
 class Bottleneck(nn.Module):
@@ -64,6 +73,13 @@ class Bottleneck(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
+
+    def get_layer_weight_tuples(self):
+        return {
+            "conv_1": (self.conv1, self.conv1.weight),
+            "conv_2": (self.conv2, self.conv2.weight),
+            "conv_3": (self.conv3, self.conv3.weight)
+        }
 
     def forward(self, x):
         residual = x
@@ -98,27 +114,35 @@ class Hourglass(nn.Module):
         layers = []
         for i in range(0, num_blocks):
             layers.append(block(planes, int(planes / block.expansion)))      # output channel: planes (n_joints / n_paf)
-        return nn.Sequential(*layers)
+        return nn.ModuleList(layers)
 
     def _make_hour_glass(self, block, num_blocks, planes, depth):
         hg = []
         for i in range(depth):
             res = []
-            for j in range(3):
+            for j in range(2 if i == 0 else 3):
                 res.append(self._make_residual(block, num_blocks, planes))
-            if i == 0:
-                res.append(self._make_residual(block, num_blocks, planes))
+
             hg.append(nn.ModuleList(res))
         return nn.ModuleList(hg)
 
+    def get_weights(self):
+        weights = dict()
+        for i, res in enumerate(self.hg):
+            for j, blocks in enumerate(res):
+                for k, block in enumerate(blocks):
+                    # store tuples (layer, weight)
+                    weights["dep{}/blocks{}/block{}".format(i, j, k)] = block.get_layer_weight_tuples()
+        return weights
+
     def _hour_glass_forward(self, n, x):
-        up1 = self.hg[2][0](x)
-        up1 = self.hg[2][1](up1)
+        up1 = self.hg[n - 1][0](x)
+        up1 = self.hg[n - 1][1](up1)
         if n > 1:
-            up1 = self._hour_glass_forward(n-1, up1)
-        pool = nn.MaxPool2d(2,stride=2)(x)
-        low1 = self.hg[1][0](pool)
-        low2 = self.hg[1][1](low1)
+            up1 = self._hour_glass_forward(n - 1, up1)
+        pool = nn.MaxPool2d(2, stride=2)(x)
+        low1 = self.hg[n - 2][0](pool)
+        low2 = self.hg[n - 2][1](low1)
         if n == 1:
             low2 = self.hg[0][0](low2)
             low2 = self.hg[0][1](low2)
@@ -138,31 +162,42 @@ class CPRmodel(nn.Module):
         assert (n_stages > 0)
         self.backend = backend
         self.n_stages = n_stages
-        self.stages = nn.ModuleList([Stage(backend_outp_feats,
-                                           n_joints,
-                                           n_paf,
-                                           True,
-                                           blocktype=blocktype),
-                                     Stage(backend_outp_feats,
-                                           n_joints,
-                                           n_paf,
-                                           False,
-                                           blocktype=blocktype)])
+        layers = [Stage(backend_outp_feats, n_joints, n_paf, True, False, blocktype=blocktype),
+                  Stage(backend_outp_feats, n_joints, n_paf, False, True, blocktype=blocktype)]
+
+        self.source = layers[1]
+
+        for i in range(n_stages - 2):
+            stage = Stage(backend_outp_feats, n_joints, n_paf, False, False, blocktype=blocktype)
+            # print(dir(stage))
+            # stage.apply(self._copy_weights)
+            self._copy_weights(self.source, stage)
+            layers += [stage]
+        self.stages = nn.ModuleList(layers)
+
+    def __copy_weights(self, source):
+        for s_m, d_m in zip(source.modules(), self.dest.modules()):
+            if not (isinstance(d_m, nn.ReLU) or isinstance(s_m, Bottleneck)):
+                d_m.weight = s_m.weight
+
+    def _copy_weights(self, source_block, dest_block):
+        for b_name, b_weights in dest_block.get_weights().items():
+            for i in range(HG_DEPTH):
+                for j in range(2):
+                    for k in range(HG_NUM_BLOCKS):
+                        for layer_index, l_w_t in b_weights["dep{}/blocks{}/block{}".format(i, j, k)].items():
+                            conv_layer, _ = l_w_t
+                            _, source_weight = source_block.get_weights()[b_name]["dep{}/blocks{}/block{}".format(i, j, k)][layer_index]
+                            conv_layer.weight = source_weight
+                            print("Copied weights of layer dep{}/blocks{}/block{}".format(i, j, k))
 
     def forward(self, x):
         img_feats = self.backend(x)
         cur_feats = img_feats
         heatmap_outs, paf_outs = [], []
 
-        # stage 1
-        heatmap_out, paf_out = self.stages[0](cur_feats)
-        heatmap_outs.append(heatmap_out)
-        paf_outs.append(paf_out)
-        cur_feats = torch.cat([img_feats, heatmap_out, paf_out], 1)
-
-        # stage >= 2, recursive forwarding through same module (or seen as shared weights)
-        for _ in range(self.n_stages):
-            heatmap_out, paf_out = self.stages[1](cur_feats)
+        for i, stage in enumerate(self.stages):
+            heatmap_out, paf_out = stage(cur_feats)
             heatmap_outs.append(heatmap_out); paf_outs.append(paf_out)
             cur_feats = torch.cat([img_feats, heatmap_out, paf_out], 1)
 
@@ -170,17 +205,34 @@ class CPRmodel(nn.Module):
 
 
 class Stage(nn.Module):
-    def __init__(self, backend_outp_feats, n_joints, n_paf, stage1, blocktype="standard"):
+    def __init__(self, backend_outp_feats, n_joints, n_paf, stage1, stage2, blocktype="standard"):
         super(Stage, self).__init__()
         if stage1:
-            self.block1 = blockFactory(backend_outp_feats, n_joints, blocktype, True)
-            self.block2 = blockFactory(backend_outp_feats, n_paf, blocktype, True)
+            block_fact1 = blockFactory(backend_outp_feats, n_joints, blocktype, True)
+            block_fact2 = blockFactory(backend_outp_feats, n_paf, blocktype, True)
+
+            self.block1 = block_fact1.get_block()
+            self.block2 = block_fact2.get_block()
         else:
             inp_feats = backend_outp_feats + n_joints + n_paf
-            self.block1 = blockFactory(inp_feats, n_joints, blocktype)
-            self.block2 = blockFactory(inp_feats, n_paf, blocktype)
+            block_fact1 = blockFactory(inp_feats, n_joints, blocktype)
+            block_fact2 = blockFactory(inp_feats, n_paf, blocktype)
+
+            self.block1 = block_fact1.get_block()
+            self.block2 = block_fact2.get_block()
+            self.weights = {
+                "block1": block_fact1.get_weights(),
+                "block2": block_fact2.get_weights()
+            }
         init(self.block1)
         init(self.block2)
+
+    def get_weights(self):
+        # tuples (layer, weight)
+        return self.weights
+
+    def get_blocks(self):
+        return [self.block1, self.block2]
 
     def forward(self, x):
         y1 = self.block1(x)
