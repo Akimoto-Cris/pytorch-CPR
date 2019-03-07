@@ -36,7 +36,6 @@ class blockFactory:
             if blocktype == "standard":
                 self.block = make_paf_block_stage2(output_feats, output_feats)
             elif blocktype == "hg":
-                print("!" * 100)
                 layers = [Hourglass(Bottleneck,
                                     num_blocks=HG_NUM_BLOCKS,
                                     planes=inp_feats,
@@ -81,7 +80,6 @@ class Bottleneck(nn.Module):
 
     def forward(self, x):
         residual = x
-
         out = self.bn1(x)
         out = self.relu(out)
         out = self.conv1(out)
@@ -105,7 +103,6 @@ class Hourglass(nn.Module):
     def __init__(self, block, num_blocks, planes, depth): # planes : channels
         super(Hourglass, self).__init__()
         self.depth = depth
-        self.upsample = nn.Upsample(scale_factor=2)
         self.hg = self._make_hour_glass(block, num_blocks, planes, depth)
 
     def _make_hour_glass(self, block, num_blocks, planes, depth):
@@ -130,13 +127,14 @@ class Hourglass(nn.Module):
         low1 = nn.MaxPool2d(2, stride=2)(up1)
         low1 = self.hg[n - 1][1](low1)
 
-        if n > 1:
-            low2 = self._hour_glass_forward(n - 1, low1)
-        else:
-            low2 = self.hg[n - 1][HG_NUM_BLOCKS](low1)
+        low2 = self._hour_glass_forward(n - 1, low1) if n > 1 \
+            else self.hg[n - 1][HG_NUM_BLOCKS](low1)
 
         low2 = self.hg[n - 1][2](low2)
-        up2 = self.upsample(low2)
+        up2 = F.interpolate(low2, scale_factor=2, mode='bilinear')
+
+        if n < self.depth:
+            up2 = nn.ZeroPad2d((1, 0, 1, 0))(up2)
 
         return up1 + up2
 
@@ -150,8 +148,8 @@ class CPRmodel(nn.Module):
         assert (n_stages > 0)
         self.backend = backend
         self.n_stages = n_stages
-        layers = [Stage(backend_outp_feats, n_joints, n_paf, True, False, blocktype=blocktype),
-                  Stage(backend_outp_feats, n_joints, n_paf, False, True, blocktype=blocktype)]
+        layers = [Stage(backend_outp_feats, n_joints, n_paf, True, blocktype=blocktype),
+                  Stage(backend_outp_feats, n_joints, n_paf, False, blocktype=blocktype)]
 
         self.source = layers[1]
 
@@ -176,8 +174,9 @@ class CPRmodel(nn.Module):
         heatmap_outs, paf_outs = [], []
         heatmap_out, paf_out = self.stages[0](cur_feats)
         heatmap_outs.append(heatmap_out); paf_outs.append(paf_out)
+        cur_feats = torch.cat([img_feats, heatmap_out, paf_out], 1)
 
-        for _ in range(self.n_stages - 1):
+        for _ in range(self.n_stages - 2):
             heatmap_out, paf_out = self.stages[1](cur_feats)
             heatmap_outs.append(heatmap_out); paf_outs.append(paf_out)
             cur_feats = torch.cat([img_feats, heatmap_out, paf_out], 1)
@@ -186,7 +185,7 @@ class CPRmodel(nn.Module):
 
 
 class Stage(nn.Module):
-    def __init__(self, backend_outp_feats, n_joints, n_paf, stage1, stage2, blocktype="standard"):
+    def __init__(self, backend_outp_feats, n_joints, n_paf, stage1, blocktype="standard"):
         super(Stage, self).__init__()
         if stage1:
             block_fact1 = blockFactory(backend_outp_feats, n_joints, blocktype, True)
