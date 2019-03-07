@@ -6,7 +6,7 @@ import torch
 NUM_JOINTS = 18
 NUM_LIMBS = 38
 HG_DEPTH=3
-HG_NUM_BLOCKS=2
+HG_NUM_BLOCKS=3
 
 def make_paf_block_stage1(inp_feats, output_feats):
     layers = [make_standard_block(inp_feats, 128, 3),       # conv + bn + relu
@@ -36,6 +36,7 @@ class blockFactory:
             if blocktype == "standard":
                 self.block = make_paf_block_stage2(output_feats, output_feats)
             elif blocktype == "hg":
+                print("!" * 100)
                 layers = [Hourglass(Bottleneck,
                                     num_blocks=HG_NUM_BLOCKS,
                                     planes=inp_feats,
@@ -60,15 +61,12 @@ class Bottleneck(nn.Module):
     def __init__(self, inplanes, planes, stride=1, downsample=None):
         super(Bottleneck, self).__init__()
 
-        self.bn1 = nn.BatchNorm2d(inplanes, eps=1e-05, momentum=0.1, affine=True,
-                                  track_running_stats=True)
+        self.bn1 = nn.BatchNorm2d(inplanes)
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=True)
-        self.bn2 = nn.BatchNorm2d(planes, eps=1e-05, momentum=0.1, affine=True,
-                                  track_running_stats=True)
+        self.bn2 = nn.BatchNorm2d(planes)
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride,
                                padding=1, bias=True)
-        self.bn3 = nn.BatchNorm2d(planes, eps=1e-05, momentum=0.1, affine=True,
-                                  track_running_stats=True)
+        self.bn3 = nn.BatchNorm2d(planes)
         self.conv3 = nn.Conv2d(planes, planes * self.expansion, kernel_size=1, bias=True)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
@@ -107,6 +105,7 @@ class Hourglass(nn.Module):
     def __init__(self, block, num_blocks, planes, depth): # planes : channels
         super(Hourglass, self).__init__()
         self.depth = depth
+        self.upsample = nn.Upsample(scale_factor=2)
         self.hg = self._make_hour_glass(block, num_blocks, planes, depth)
 
     def _make_hour_glass(self, block, num_blocks, planes, depth):
@@ -128,20 +127,18 @@ class Hourglass(nn.Module):
 
     def _hour_glass_forward(self, n, x):
         up1 = self.hg[n - 1][0](x)
-        up1 = self.hg[n - 1][1](up1)
+        low1 = nn.MaxPool2d(2, stride=2)(up1)
+        low1 = self.hg[n - 1][1](low1)
+
         if n > 1:
-            up1 = self._hour_glass_forward(n - 1, up1)
-        pool = nn.MaxPool2d(2, stride=2)(x)
-        low1 = self.hg[n - 2][0](pool)
-        low2 = self.hg[n - 2][1](low1)
-        if n == 1:
-            low2 = self.hg[0][0](low2)
-            low2 = self.hg[0][1](low2)
+            low2 = self._hour_glass_forward(n - 1, low1)
+        else:
+            low2 = self.hg[n - 1][HG_NUM_BLOCKS](low1)
 
-        sam = F.interpolate(low2, scale_factor=2)
+        low2 = self.hg[n - 1][2](low2)
+        up2 = self.upsample(low2)
 
-        out = up1 + sam
-        return out
+        return up1 + up2
 
     def forward(self, x):
         return self._hour_glass_forward(self.depth, x)
@@ -158,10 +155,10 @@ class CPRmodel(nn.Module):
 
         self.source = layers[1]
 
-        for _ in range(n_stages - 2):
+        '''for _ in range(n_stages - 2):
             stage = Stage(backend_outp_feats, n_joints, n_paf, False, False, blocktype=blocktype)
             self._copy_weights(self.source, stage)
-            layers += [stage]
+            layers += [stage]'''
         self.stages = nn.ModuleList(layers)
 
     def _copy_weights(self, source_block, dest_block):
@@ -177,9 +174,11 @@ class CPRmodel(nn.Module):
         img_feats = self.backend(x)
         cur_feats = img_feats
         heatmap_outs, paf_outs = [], []
+        heatmap_out, paf_out = self.stages[0](cur_feats)
+        heatmap_outs.append(heatmap_out); paf_outs.append(paf_out)
 
-        for i, stage in enumerate(self.stages):
-            heatmap_out, paf_out = stage(cur_feats)
+        for _ in range(self.n_stages - 1):
+            heatmap_out, paf_out = self.stages[1](cur_feats)
             heatmap_outs.append(heatmap_out); paf_outs.append(paf_out)
             cur_feats = torch.cat([img_feats, heatmap_out, paf_out], 1)
 
