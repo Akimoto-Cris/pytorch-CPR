@@ -2,7 +2,6 @@ import torch.nn as nn
 import math
 import torch
 import hiddenlayer as hl
-import numpy as np
 
 
 def init(model):
