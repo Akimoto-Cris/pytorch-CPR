@@ -15,8 +15,7 @@ def init(model):
 
 
 def make_standard_block(feat_in, feat_out, kernel, stride=1, padding=1, use_bn=True):
-    layers = []
-    layers += [nn.Conv2d(feat_in, feat_out, kernel, stride, padding)]
+    layers = [nn.Conv2d(feat_in, feat_out, kernel, stride, padding)]
     if use_bn:
         layers += [nn.BatchNorm2d(feat_out, eps=1e-05, momentum=0.1, affine=True,
                                   track_running_stats=True)]
@@ -34,3 +33,20 @@ def visualize_net(model, save_dir):
     hl.save(save_dir + "/model.pdf")
     print("Net Visualization saved to {}".format(save_dir + "/model.pdf"))
     return True
+
+
+def adaptive_padding(up1, up2):
+    hw1, hw2 = up1.shape[2:], up2.shape[2:]
+    assert (hw1[0] >= hw2[0] and hw1[1] >= hw2[1])
+
+    single_offset = (hw1 - hw2) // 2
+    leftout = (hw1 - hw2) % 2
+
+    return (single_offset[1] + leftout[1],      # padding left
+            single_offset[1],                   # padding right
+            single_offset[0] + leftout[0],      # padding top
+            single_offset[0])                   # padding down
+
+
+
+

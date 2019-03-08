@@ -1,6 +1,6 @@
 import torch.nn as nn
 import torch.nn.functional as F
-from .helper import init, make_standard_block
+from .helper import init, make_standard_block, adaptive_padding
 import torch
 
 NUM_JOINTS = 18
@@ -124,6 +124,7 @@ class Hourglass(nn.Module):
 
     def _hour_glass_forward(self, n, x):
         up1 = self.hg[n - 1][0](x)
+        print("depth: {} up1: {}".format(n, up1.shape))
         low1 = nn.MaxPool2d(2, stride=2)(up1)
         low1 = self.hg[n - 1][1](low1)
 
@@ -132,9 +133,9 @@ class Hourglass(nn.Module):
 
         low2 = self.hg[n - 1][2](low2)
         up2 = F.interpolate(low2, scale_factor=2, mode='bilinear')
+        print("depth: {} up2: {}".format(n, up1.shape))
 
-        if n < self.depth:
-            up2 = nn.ZeroPad2d((1, 0, 1, 0))(up2)
+        up2 = nn.ZeroPad2d(adaptive_padding(up1, up2))(up2)
 
         return up1 + up2
 
