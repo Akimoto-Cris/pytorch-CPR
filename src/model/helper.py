@@ -2,6 +2,7 @@ import torch.nn as nn
 import math
 import torch
 import hiddenlayer as hl
+import numpy as np
 
 
 def init(model):
@@ -36,11 +37,11 @@ def visualize_net(model, save_dir):
 
 
 def adaptive_padding(up1, up2):
-    hw1, hw2 = up1.shape[2:], up2.shape[2:]
+    hw1, hw2 = tuple(up1.shape[2:]), list(up2.shape[2:])
     assert (hw1[0] >= hw2[0] and hw1[1] >= hw2[1])
 
-    single_offset = (hw1 - hw2) // 2
-    leftout = (hw1 - hw2) % 2
+    single_offset = list(map(lambda x, y: (x - y) // 2, tuple(hw1), tuple(hw2)))
+    leftout = list(map(lambda x, y: (x - y) % 2, tuple(hw1), tuple(hw2)))
 
     return (single_offset[1] + leftout[1],      # padding left
             single_offset[1],                   # padding right
