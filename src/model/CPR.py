@@ -27,6 +27,38 @@ def make_paf_block_stage2(inp_feats, output_feats):
     layers += [nn.Conv2d(128, output_feats, 1, 1, 0)]
     return nn.Sequential(*layers)
 
+# https://github.com/kuangliu/pytorch-groupnorm
+class GroupNorm(nn.Module):
+    def __init__(self, num_features, num_groups=32, eps=1e-5):
+        super(GroupNorm, self).__init__()
+        self.weight = nn.Parameter(torch.ones(1,num_features,1,1))
+        self.bias = nn.Parameter(torch.zeros(1,num_features,1,1))
+        self.num_groups = num_groups
+        self.eps = eps
+
+    def forward(self, x):
+        N, C, H, W = x.size()
+        G = self.num_groups
+        if C % G == 0:
+            x = x.view(N, G, -1)
+            mean = x.mean(-1, keepdim=True)
+            var = x.var(-1, keepdim=True)
+            x = (x - mean) / (var + self.eps).sqrt()
+        else:
+            whole = x[:, : G * (C // G), :, :]
+            mod = x[:, G * (C // G) + 1:, :, :]
+            whole_mean = whole.mean(-1, keepdim=True)
+            whole_var = whole.var(-1, keepdim=True)
+            mod_mean = mod.mean(-1, keepdim=True)
+            mod_var = mod.var(-1, keepdim=True)
+            whole, mod = tuple(map(lambda x, mean, var: (x - mean) / (var + self.eps).sqrt(),
+                                   [whole, mod], [whole_mean, mod_mean], [whole_var, mod_var]))
+            x = torch.cat((whole, mod), axis=1)
+
+        x = (x-mean) / (var+self.eps).sqrt()
+        x = x.view(N, C, H, W)
+        return x * self.weight + self.bias
+
 
 class blockFactory:
     def __init__(self, inp_feats, output_feats, blocktype="standard", stage1=False):
@@ -53,23 +85,26 @@ class blockFactory:
     def get_block(self):
         return self.block
 
+#TODO: conv2 change to k7 s3
+#TODO: conv bn swtich place
 
 class Bottleneck(nn.Module):
     expansion = 2
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None):
+    def __init__(self, inplanes, planes, activation=False, kernel=3, stride=1, downsample=None):
         super(Bottleneck, self).__init__()
 
         self.bn1 = nn.BatchNorm2d(inplanes)
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=True)
         self.bn2 = nn.BatchNorm2d(planes)
-        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride,
-                               padding=1, bias=True)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=kernel, stride=stride,
+                               padding=(kernel - stride) // 2, bias=True)
         self.bn3 = nn.BatchNorm2d(planes)
         self.conv3 = nn.Conv2d(planes, planes * self.expansion, kernel_size=1, bias=True)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
+        self.activation = activation
 
     def get_layer_weight_tuples(self):
         return {
@@ -96,7 +131,7 @@ class Bottleneck(nn.Module):
             residual = self.downsample(x)
 
         out += residual
-        return out
+        return self.relu(out) if self.activation else out
 
 
 class Hourglass(nn.Module):
@@ -142,15 +177,18 @@ class Hourglass(nn.Module):
 
 
 class CPRmodel(nn.Module):
-    def __init__(self, backend, backend_outp_feats, n_joints, n_paf, n_stages=7, blocktype="standard"):
+    def __init__(self, backend, backend_outp_feats, n_joints, n_paf, n_stages=7,
+                 blocktype="standard", share=True):
         super(CPRmodel, self).__init__()
         assert (n_stages > 0)
         self.backend = backend
         self.n_stages = n_stages
-        layers = [Stage(backend_outp_feats, n_joints, n_paf, True, blocktype=blocktype),
+        layers = [Stage(backend_outp_feats, n_joints, n_paf, True, blocktype="standard"),
                   Stage(backend_outp_feats, n_joints, n_paf, False, blocktype=blocktype)]
-
+        if not share:
+            layers += [Stage(backend_outp_feats, n_joints, n_paf, False, blocktype=blocktype)] * (n_stages - 2)
         self.source = layers[1]
+        self.share = share
 
         '''for _ in range(n_stages - 2):
             stage = Stage(backend_outp_feats, n_joints, n_paf, False, False, blocktype=blocktype)
@@ -175,8 +213,9 @@ class CPRmodel(nn.Module):
         heatmap_outs.append(heatmap_out); paf_outs.append(paf_out)
         cur_feats = torch.cat([img_feats, heatmap_out, paf_out], 1)
 
-        for _ in range(self.n_stages - 2):
+        for i in range(self.n_stages - 2):
             heatmap_out, paf_out = self.stages[1](cur_feats)
+            # heatmap_out, paf_out = self.stages[(i + 1) if not self.share else 1](cur_feats)
             heatmap_outs.append(heatmap_out); paf_outs.append(paf_out)
             cur_feats = torch.cat([img_feats, heatmap_out, paf_out], 1)
 
