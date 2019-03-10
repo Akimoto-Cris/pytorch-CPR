@@ -27,7 +27,7 @@ def make_paf_block_stage2(inp_feats, output_feats):
     layers += [nn.Conv2d(128, output_feats, 1, 1, 0)]
     return nn.Sequential(*layers)
 
-# https://github.com/kuangliu/pytorch-groupnorm
+
 class GroupNorm(nn.Module):
     def __init__(self, num_features, num_groups=32, eps=1e-5):
         super(GroupNorm, self).__init__()
@@ -61,7 +61,7 @@ class GroupNorm(nn.Module):
 
 
 class blockFactory:
-    def __init__(self, inp_feats, output_feats, blocktype="standard", stage1=False):
+    def __init__(self, inp_feats, output_feats, blocktype="standard", stage1=False, activation=False):
         if stage1:
             self.block = make_paf_block_stage1(inp_feats, output_feats)
         else:
@@ -71,7 +71,8 @@ class blockFactory:
                 layers = [Hourglass(Bottleneck,
                                     num_blocks=HG_NUM_BLOCKS,
                                     planes=inp_feats,
-                                    depth=HG_DEPTH),
+                                    depth=HG_DEPTH,
+                                    activation=activation),
                           make_standard_block(inp_feats, output_feats, 1, 1, 0)]
                 self.weights = layers[0].get_weights()
                 self.block = nn.Sequential(*layers)
@@ -135,10 +136,13 @@ class Bottleneck(nn.Module):
 
 
 class Hourglass(nn.Module):
-    def __init__(self, block, num_blocks, planes, depth): # planes : channels
+    def __init__(self, block, num_blocks, planes, depth, activation=False): # planes : channels
         super(Hourglass, self).__init__()
         self.depth = depth
         self.hg = self._make_hour_glass(block, num_blocks, planes, depth)
+        if activation:
+            self.relu = nn.ReLU(inplace=True)
+        self.activation = activation
 
     def _make_hour_glass(self, block, num_blocks, planes, depth):
         hg = []
@@ -170,7 +174,8 @@ class Hourglass(nn.Module):
 
         up2 = nn.ZeroPad2d(adaptive_padding(up1, up2))(up2)
 
-        return up1 + up2
+        out = up1 + up2
+        return self.relu(out) if self.activation else out
 
     def forward(self, x):
         return self._hour_glass_forward(self.depth, x)
@@ -178,15 +183,16 @@ class Hourglass(nn.Module):
 
 class CPRmodel(nn.Module):
     def __init__(self, backend, backend_outp_feats, n_joints, n_paf, n_stages=7,
-                 blocktype="standard", share=True):
+                 blocktype="standard", share=True, activation=False):
         super(CPRmodel, self).__init__()
         assert (n_stages > 0)
         self.backend = backend
         self.n_stages = n_stages
         layers = [Stage(backend_outp_feats, n_joints, n_paf, True, blocktype="standard"),
-                  Stage(backend_outp_feats, n_joints, n_paf, False, blocktype=blocktype)]
+                  Stage(backend_outp_feats, n_joints, n_paf, False, blocktype=blocktype, activation=activation)]
         if not share:
-            layers += [Stage(backend_outp_feats, n_joints, n_paf, False, blocktype=blocktype)] * (n_stages - 2)
+            layers += [Stage(backend_outp_feats, n_joints, n_paf, False,
+                             blocktype=blocktype, activation=activation)] * (n_stages - 2)
         self.source = layers[1]
         self.share = share
 
@@ -223,7 +229,7 @@ class CPRmodel(nn.Module):
 
 
 class Stage(nn.Module):
-    def __init__(self, backend_outp_feats, n_joints, n_paf, stage1, blocktype="standard"):
+    def __init__(self, backend_outp_feats, n_joints, n_paf, stage1, blocktype="standard", activation=False):
         super(Stage, self).__init__()
         if stage1:
             block_fact1 = blockFactory(backend_outp_feats, n_joints, blocktype, True)
@@ -233,8 +239,8 @@ class Stage(nn.Module):
             self.block2 = block_fact2.get_block()
         else:
             inp_feats = backend_outp_feats + n_joints + n_paf
-            block_fact1 = blockFactory(inp_feats, n_joints, blocktype)
-            block_fact2 = blockFactory(inp_feats, n_paf, blocktype)
+            block_fact1 = blockFactory(inp_feats, n_joints, blocktype, activation=activation)
+            block_fact2 = blockFactory(inp_feats, n_paf, blocktype, activation=activation)
 
             self.block1 = block_fact1.get_block()
             self.block2 = block_fact2.get_block()

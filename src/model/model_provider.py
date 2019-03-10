@@ -20,8 +20,8 @@ def create_model(opt):
         backend_feats = 128
     else:
         raise ValueError('Model ' + opt.backend + ' not available.')
-    model = PAFModel(backend,backend_feats,n_joints=18,n_paf=32,n_stages=7) if opt.model == 'paf' else \
-                CPRmodel(backend,backend_feats,n_joints=18,n_paf=32,n_stages=4, blocktype=opt.blocktype)
+    model = PAFModel(backend, backend_feats, n_joints=18, n_paf=32, n_stages=7) if opt.model == 'paf' else \
+                CPRmodel(backend, backend_feats, n_joints=18, n_paf=32, n_stages=4, blocktype=opt.blocktype, activation=opt.activation)
     if not opt.loadModel=='none':
         model = torch.load(opt.loadModel)
         print('Loaded model from '+opt.loadModel)
