@@ -36,6 +36,7 @@ class Opts:
         self.parser.add_argument('--device', default='0', type=str, help='gpu index/ indexes of use')
         self.parser.add_argument('--model', default='paf', type=str, help='cpr / paf model')
         self.parser.add_argument('--vizModel', dest='vizModel', action='store_true', help='visualize model structure')
+        self.parser.add_argument('--activation', dest='activation', action='store_true', help='true to add relu after Add layers')
         self.parser.add_argument('--blocktype', default="standard", type=str, help='hg / standard')
 
     def parse(self):
