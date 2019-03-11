@@ -34,7 +34,6 @@ def visualize_net(model, save_dir):
     print("Net Visualization saved to {}".format(save_dir + "/model.pdf"))
     return True
 
-
 def adaptive_padding(up1, up2):
     hw1, hw2 = tuple(up1.shape[2:]), list(up2.shape[2:])
     assert (hw1[0] >= hw2[0] and hw1[1] >= hw2[1])
@@ -46,7 +45,4 @@ def adaptive_padding(up1, up2):
             single_offset[1],                   # padding right
             single_offset[0] + leftout[0],      # padding top
             single_offset[0])                   # padding down
-
-
-
 
