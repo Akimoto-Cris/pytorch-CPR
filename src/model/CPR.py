@@ -148,12 +148,14 @@ class Hourglass(nn.Module):
             self.relu = nn.ReLU(inplace=True)
 
     def _make_hour_glass(self, block, num_blocks, planes, depth):
-        hg = []
-        for i in range(depth):
-            res = []
-            for _ in range(num_blocks + int(i == 0)):
-                res.append(block(planes, planes, kernel=self.kernel_size))
-            hg.append(nn.ModuleList(res))
+        hg = [
+            nn.ModuleList(
+                [block(planes, planes, kernel=self.kernel_size),
+                 block(planes, 128, kernel=self.kernel_size),
+                 block(128, planes, kernel=self.kernel_size),
+                 block(planes, planes, kernel=1)]
+            )
+        ] * depth
         return nn.ModuleList(hg)
 
     def get_weights(self):
@@ -176,8 +178,8 @@ class Hourglass(nn.Module):
         up2 = F.interpolate(low2, scale_factor=2, mode='bilinear')
 
         up2 = nn.ZeroPad2d(adaptive_padding(up1, up2))(up2)
-
-        out = up1 + up2
+        mapping = self.hg[n - 1][HG_NUM_BLOCKS](up1)
+        out = mapping + up2
         return out
 
     def forward(self, x):
