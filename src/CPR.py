@@ -130,7 +130,7 @@ class Bottleneck(nn.Module):
         out = self.bn3(out)
         out = self.relu(out)
         out = self.conv3(out)
-        if self.downsample:
+        if self.identical_mapping:
             residual = self.identical_mapping(x)
         out += residual
         return self.relu(out) if self.activation else out
