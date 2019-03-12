@@ -6,7 +6,7 @@ import torch
 NUM_JOINTS = 18
 NUM_LIMBS = 38
 HG_DEPTH=3
-HG_NUM_BLOCKS=2
+HG_NUM_BLOCKS=3
 RESIDUAL_BN_CONV=False  # ugly but works
 
 def make_paf_block_stage1(inp_feats, output_feats):
@@ -62,7 +62,7 @@ class GroupNorm(nn.Module):
 
 
 class blockFactory:
-    def __init__(self, inp_feats, output_feats, blocktype="standard", stage1=False, kernel_size=3):
+    def __init__(self, inp_feats, output_feats, blocktype="standard", stage1=False, kernel_size=3, activation=False):
         if stage1:
             self.block = make_paf_block_stage1(inp_feats, output_feats)
         else:
@@ -73,7 +73,8 @@ class blockFactory:
                                     num_blocks=HG_NUM_BLOCKS,
                                     planes=inp_feats,
                                     depth=HG_DEPTH,
-                                    kernel_size=kernel_size),
+                                    kernel_size=kernel_size,
+                                    activation=activation),
                           make_standard_block(inp_feats, output_feats, 1, 1, 0)]
                 self.weights = layers[0].get_weights()
                 self.block = nn.Sequential(*layers)
@@ -102,7 +103,8 @@ class Bottleneck(nn.Module):
         self.bn3 = nn.BatchNorm2d(inplanes // self.expansion)
         self.conv3 = nn.Conv2d(inplanes // self.expansion, outplanes, kernel_size=1, bias=True)
         self.relu = nn.ReLU(inplace=True)
-        if inplanes != outplanes:
+        self.flag = inplanes != outplanes
+        if self.flag:
             self.identical_mapping = nn.Sequential(
                 nn.BatchNorm2d(inplanes),
                 nn.Conv2d(inplanes, outplanes, kernel_size=1, bias=True, stride=1)
@@ -130,7 +132,7 @@ class Bottleneck(nn.Module):
         out = self.bn3(out)
         out = self.relu(out)
         out = self.conv3(out)
-        if self.downsample:
+        if self.flag:
             residual = self.identical_mapping(x)
         out += residual
         return self.relu(out) if self.activation else out
@@ -184,14 +186,17 @@ class Hourglass(nn.Module):
 
 class CPRmodel(nn.Module):
     def __init__(self, backend, backend_outp_feats, n_joints, n_paf, n_stages=7,
-                 share=True, blocktype="standard", kernel_size=3):
+                 share=True, blocktype="standard", kernel_size=3, activation=False):
         super(CPRmodel, self).__init__()
         assert (n_stages > 0)
         self.backend = backend
         self.n_stages = n_stages
-        layers = [Stage(backend_outp_feats, n_joints, n_paf, True, blocktype="standard", kernel_size=kernel_size),
-                  Stage(backend_outp_feats, n_joints, n_paf, False, blocktype=blocktype, kernel_size=kernel_size),
-                  Stage(backend_outp_feats, n_joints, n_paf, False, blocktype=blocktype, kernel_size=kernel_size)]
+        layers = [Stage(backend_outp_feats, n_joints, n_paf, True, blocktype="standard",
+                        kernel_size=kernel_size, activation=activation),
+                  Stage(backend_outp_feats, n_joints, n_paf, False, blocktype=blocktype,
+                        kernel_size=kernel_size, activation=activation),
+                  Stage(backend_outp_feats, n_joints, n_paf, False, blocktype=blocktype,
+                        kernel_size=kernel_size, activation=activation)]
         if not share:
             layers += [Stage(backend_outp_feats, n_joints, n_paf, False, blocktype=blocktype,
                              kernel_size=kernel_size)] * (n_stages - 3)
@@ -201,8 +206,8 @@ class CPRmodel(nn.Module):
         '''for _ in range(n_stages - 2):
             stage = Stage(backend_outp_feats, n_joints, n_paf, False, blocktype=blocktype)
             self._copy_weights(self.source, stage)
-            layers += [stage]
-            self.stages = nn.ModuleList(layers)'''
+            layers += [stage]'''
+        self.stages = nn.ModuleList(layers)
 
     def _copy_weights(self, source_block, dest_block):
         for b_name, b_weights in dest_block.get_weights().items():
@@ -231,18 +236,22 @@ class CPRmodel(nn.Module):
 
 
 class Stage(nn.Module):
-    def __init__(self, backend_outp_feats, n_joints, n_paf, stage1, blocktype="standard", kernel_size=3):
+    def __init__(self, backend_outp_feats, n_joints, n_paf, stage1, blocktype="standard", kernel_size=3, activation=False):
         super(Stage, self).__init__()
         if stage1:
-            block_fact1 = blockFactory(backend_outp_feats, n_joints, blocktype, True, kernel_size=kernel_size)
-            block_fact2 = blockFactory(backend_outp_feats, n_paf, blocktype, True, kernel_size=kernel_size)
+            block_fact1 = blockFactory(backend_outp_feats, n_joints, blocktype, True,
+                                       kernel_size=kernel_size, activation=activation)
+            block_fact2 = blockFactory(backend_outp_feats, n_paf, blocktype, True,
+                                       kernel_size=kernel_size, activation=activation)
 
             self.block1 = block_fact1.get_block()
             self.block2 = block_fact2.get_block()
         else:
             inp_feats = backend_outp_feats + n_joints + n_paf
-            block_fact1 = blockFactory(inp_feats, n_joints, blocktype, kernel_size=kernel_size)
-            block_fact2 = blockFactory(inp_feats, n_paf, blocktype, kernel_size=kernel_size)
+            block_fact1 = blockFactory(inp_feats, n_joints, blocktype,
+                                       kernel_size=kernel_size, activation=activation)
+            block_fact2 = blockFactory(inp_feats, n_paf, blocktype,
+                                       kernel_size=kernel_size, activation=activation)
 
             self.block1 = block_fact1.get_block()
             self.block2 = block_fact2.get_block()
