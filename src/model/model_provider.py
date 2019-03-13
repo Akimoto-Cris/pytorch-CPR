@@ -10,6 +10,8 @@ def parse_criterion(criterion):
         return nn.L1Loss(size_average = False)
     elif criterion == 'mse':
         return nn.MSELoss(size_average = False)
+    elif criterion == 'smoooth_l1':
+        return nn.SmoothL1Loss(size_average=False)
     else:
         raise ValueError('Criterion ' + criterion + ' not supported')
 
@@ -21,9 +23,11 @@ def create_model(opt):
     else:
         raise ValueError('Model ' + opt.backend + ' not available.')
     model = PAFModel(backend, backend_feats, n_joints=18, n_paf=32, n_stages=7) if opt.model == 'paf' else \
-                CPRmodel(backend, backend_feats, n_joints=18, n_paf=32, n_stages=4, blocktype=opt.blocktype, activation=opt.activation)
+                CPRmodel(backend, backend_feats, n_joints=18, n_paf=32, n_stages=5, blocktype=opt.blocktype,
+                         share=opt.share, kernel_size=7, activation=opt.activation)
     if not opt.loadModel=='none':
-        model = torch.load(opt.loadModel)
+        # model = torch.load(opt.loadModel)
+        model.load_state_dict(torch.load(opt.loadModel))
         print('Loaded model from '+opt.loadModel)
     criterion_hm = parse_criterion(opt.criterionHm)
     criterion_paf = parse_criterion(opt.criterionPaf)
