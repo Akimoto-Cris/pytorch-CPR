@@ -62,7 +62,6 @@ class process:
         heatmap_loss_avg, paf_loss_avg = 0.0, 0.0
         for epoch in range(1, n_epochs + 1):
             self.step(train_loader, criterion_hm, criterion_paf, True, optimizer, viz_output=viz_output)
-            torch.cuda.empty_cache()
             if epoch % val_interval == 0:
                 torch.cuda.empty_cache()
                 with torch.no_grad():
@@ -74,7 +73,8 @@ class process:
     def validate_net(self, test_loader, criterion_hm, criterion_paf, save_dir=None, epoch=0, viz_output=False):
         heatmap_loss_avg, paf_loss_avg = self.step(test_loader, criterion_hm, criterion_paf, viz_output=viz_output)
         if save_dir:
-            torch.save(self.model, os.path.join(save_dir, 'model_{}.pth'.format(epoch)))
+            # torch.save(self.model, os.path.join(save_dir, 'model_{}.pth'.format(epoch)))
+            torch.save(self.model.state_dict(), os.path.join(save_dir, 'model_{}.pth'.format(epoch)))
         return heatmap_loss_avg, paf_loss_avg
 
 
