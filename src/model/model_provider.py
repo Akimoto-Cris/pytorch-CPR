@@ -23,7 +23,7 @@ def create_model(opt):
     else:
         raise ValueError('Model ' + opt.backend + ' not available.')
     model = PAFModel(backend, backend_feats, n_joints=18, n_paf=32, n_stages=7) if opt.model == 'paf' else \
-                CPRmodel(backend, backend_feats, n_joints=18, n_paf=32, n_stages=5, blocktype=opt.blocktype,
+                 CPRmodel(backend, backend_feats, n_joints=18, n_paf=32, n_stages=5, blocktype=opt.blocktype,
                          share=opt.share, kernel_size=7, activation=opt.activation)
     if not opt.loadModel=='none':
         # model = torch.load(opt.loadModel)
