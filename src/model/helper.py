@@ -3,12 +3,17 @@ import math
 import torch
 import hiddenlayer as hl
 
+XAVIER_NORM=True
 
 def init(model):
     for m in model.modules():
         if isinstance(m, nn.Conv2d):
-            n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-            m.weight.data.normal_(0, math.sqrt(2. / n))
+            if XAVIER_NORM:
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.constant_(m.bias, 0.1)
+            else:
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
         elif isinstance(m, nn.BatchNorm2d):
             m.weight.data.fill_(1)
             m.bias.data.zero_()
@@ -38,11 +43,9 @@ def adaptive_padding(up1, up2):
     hw1, hw2 = tuple(up1.shape[2:]), list(up2.shape[2:])
     assert (hw1[0] >= hw2[0] and hw1[1] >= hw2[1])
 
-    single_offset = list(map(lambda x, y: (x - y) // 2, tuple(hw1), tuple(hw2)))
-    leftout = list(map(lambda x, y: (x - y) % 2, tuple(hw1), tuple(hw2)))
+    offset = list(map(lambda x, y: x - y, tuple(hw1), tuple(hw2)))
 
-    return (single_offset[1] + leftout[1],      # padding left
-            single_offset[1],                   # padding right
-            single_offset[0] + leftout[0],      # padding top
-            single_offset[0])                   # padding down
-
+    return (0,      # padding left
+            offset[1],                   # padding right
+            0,      # padding top
+            offset[0])                   # padding down
