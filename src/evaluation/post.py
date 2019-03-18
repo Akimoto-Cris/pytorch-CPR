@@ -28,7 +28,7 @@ colors = [
 
 NUM_JOINTS = 17
 NUM_LIMBS = len(joint_to_limb_heatmap_relationship)
-
+DEBUG = False
 
 def find_peaks(param, img):
     """
@@ -39,11 +39,22 @@ def find_peaks(param, img):
     in the image
     """
 
-    peaks_binary = (maximum_filter(img, footprint=generate_binary_structure(
-        2, 1)) == img) * (img > param['thre1'])
+    '''
+    footprint = array([[False,  True, False],
+                       [ True,  True,  True],
+                       [False,  True, False]], dtype=bool)
+    '''
+
+    peaks_binary = (maximum_filter(img,
+                                   footprint=generate_binary_structure(2, 1)       # mask within the filter
+                                   # array([[False,  True, False],
+                                   #        [ True,  True,  True],
+                                   #        [False,  True, False]], dtype=bool)
+                                   ) == img
+                   ) * (img > param['thre1'])
     # Note reverse ([::-1]): we return [[x y], [x y]...] instead of [[y x], [y
     # x]...]
-    return np.array(np.nonzero(peaks_binary)[::-1]).T
+    return np.array(np.nonzero(peaks_binary)[::-1]).T       # nonzero return array-like of INDICES of nonzero entries
 
 
 def compute_resized_coords(coords, resizeFactor):
@@ -111,11 +122,12 @@ def NMS(param, heatmaps, upsampFactor=1., bool_refine_center=True, bool_gaussian
         map_orig = heatmaps[:, :, joint]
         peak_coords = find_peaks(param, map_orig)
         peaks = np.zeros((len(peak_coords), 4))
+        if DEBUG:
+            print(peak_coords)
         for i, peak in enumerate(peak_coords):
             if bool_refine_center:
                 x_min, y_min = np.maximum(0, peak - win_size)
-                x_max, y_max = np.minimum(
-                    np.array(map_orig.T.shape) - 1, peak + win_size)
+                x_max, y_max = np.minimum(np.array(map_orig.T.shape) - 1, peak + win_size)
 
                 # Take a small patch around each peak and only upsample that
                 # tiny region
@@ -431,7 +443,8 @@ def decode_pose(img_orig, param, heatmaps, pafs):
 
     return to_plot, canvas, joint_list, person_to_joint_assoc
 
-def append_result(image_id, person_to_joint_assoc, joint_list, outputs):
+
+def append_result(image_id, person_to_joint_assoc, joint_list, results):
     """Build the outputs to be evaluated
     :param image_id: int, the id of the current image
     :param person_to_joint_assoc: numpy array of joints associations
@@ -469,4 +482,4 @@ def append_result(image_id, person_to_joint_assoc, joint_list, outputs):
             person_to_joint_assoc[ridxPred, -1]
         one_result["keypoints"] = list(keypoints.reshape(51))
 
-        outputs.append(one_result)
+        results.put(one_result)
