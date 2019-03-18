@@ -18,17 +18,15 @@ def parse_criterion(criterion):
 
 def create_model(opt):
     if opt.backend == 'vgg':
-        backend = VGG()
+        backend = VGG(use_bn=True)
         backend_feats = 128
     else:
         raise ValueError('Model ' + opt.backend + ' not available.')
     model = PAFModel(backend, backend_feats, n_joints=18, n_paf=32, n_stages=7) if opt.model == 'paf' else \
-                 CPRmodel(backend, backend_feats, n_joints=18, n_paf=32, n_stages=5, blocktype=opt.blocktype,
-                         share=opt.share, kernel_size=7, activation=opt.activation)
-    if not opt.loadModel=='none':
-        # model = torch.load(opt.loadModel)
-        model.load_state_dict(torch.load(opt.loadModel))
-        print('Loaded model from '+opt.loadModel)
+                CPRmodel(backend, backend_feats, n_joints=18, n_paf=32, n_stages=6, blocktype=opt.blocktype,
+                         share=False, kernel_size=3, activation=opt.activation)
+    if opt.model == "paf" and opt.loadModel:
+        model = torch.load(opt.loadModel)
     criterion_hm = parse_criterion(opt.criterionHm)
     criterion_paf = parse_criterion(opt.criterionPaf)
     return model, criterion_hm, criterion_paf

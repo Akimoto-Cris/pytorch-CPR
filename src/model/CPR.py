@@ -8,6 +8,8 @@ NUM_LIMBS = 38
 HG_DEPTH=3
 HG_NUM_BLOCKS=3
 RESIDUAL_BN_CONV=False  # ugly but works
+ID_MAPPING = True
+
 
 def make_paf_block_stage1(inp_feats, output_feats):
     layers = [make_standard_block(inp_feats, 128, 3),       # conv + bn + relu
@@ -76,14 +78,9 @@ class blockFactory:
                                     kernel_size=kernel_size,
                                     activation=activation),
                           make_standard_block(inp_feats, output_feats, 1, 1, 0)]
-                self.weights = layers[0].get_weights()
                 self.block = nn.Sequential(*layers)
             else:
                 raise Exception("Block type {} is not supported".format(blocktype))
-
-    def get_weights(self):
-        # tuples (layer, weight)
-        return self.weights
 
     def get_block(self):
         return self.block
@@ -97,13 +94,20 @@ class Bottleneck(nn.Module):
 
         self.bn1 = nn.BatchNorm2d(inplanes)
         self.conv1 = nn.Conv2d(inplanes, inplanes // self.expansion, kernel_size=1, bias=True)
+
         self.bn2 = nn.BatchNorm2d(inplanes // self.expansion)
         self.conv2 = nn.Conv2d(inplanes // self.expansion, inplanes // self.expansion, kernel_size=kernel, stride=stride,
                                padding=(kernel - stride) // self.expansion, bias=True)
         self.bn3 = nn.BatchNorm2d(inplanes // self.expansion)
-        self.conv3 = nn.Conv2d(inplanes // self.expansion, outplanes, kernel_size=1, bias=True)
+        self.conv3 = nn.Conv2d(inplanes // self.expansion, inplanes // self.expansion,kernel_size=kernel, stride=stride,
+                               padding=(kernel - stride) // self.expansion, bias=True)
+
+        self.bn4 = nn.BatchNorm2d(inplanes // self.expansion)
+        self.conv4 = nn.Conv2d(inplanes // self.expansion, outplanes, kernel_size=1, bias=True)
+
         self.relu = nn.ReLU(inplace=True)
         self.flag = inplanes != outplanes
+        self.flag = ID_MAPPING
         if self.flag:
             self.identical_mapping = nn.Sequential(
                 nn.BatchNorm2d(inplanes),
@@ -111,13 +115,6 @@ class Bottleneck(nn.Module):
             )
         self.stride = stride
         self.activation = activation
-
-    def get_layer_weight_tuples(self):
-        return {
-            "conv_1": (self.conv1, self.conv1.weight),
-            "conv_2": (self.conv2, self.conv2.weight),
-            "conv_3": (self.conv3, self.conv3.weight)
-        }
 
     def forward(self, x):
         residual = x
@@ -132,6 +129,10 @@ class Bottleneck(nn.Module):
         out = self.bn3(out)
         out = self.relu(out)
         out = self.conv3(out)
+
+        out = self.bn4(out)
+        out = self.relu(out)
+        out = self.conv4(out)
         if self.flag:
             residual = self.identical_mapping(x)
         out += residual
@@ -150,21 +151,16 @@ class Hourglass(nn.Module):
     def _make_hour_glass(self, block, num_blocks, planes, depth):
         hg = [
             nn.ModuleList(
-                [block(planes, planes, kernel=self.kernel_size),
-                 block(planes, 128, kernel=self.kernel_size),
-                 block(128, planes, kernel=self.kernel_size),
-                 block(planes, planes, kernel=1)]
+                [block(planes, planes, kernel=self.kernel_size)] * 3 +
+                [nn.Sequential(make_standard_block(planes, 128, 7, 1, 3),
+                               make_standard_block(128, 128, 7, 1, 3),
+                               make_standard_block(128, 128, 7, 1, 3),
+                               make_standard_block(128, 128, 3, 1, 1),
+                               make_standard_block(128, 128, 3, 1, 1),
+                               make_standard_block(128, planes, 3, 1, 1))]
             )
         ] * depth
         return nn.ModuleList(hg)
-
-    def get_weights(self):
-        weights = dict()
-        for i, res in enumerate(self.hg):
-            for j, block in enumerate(res):
-                # store tuples (layer, weight)
-                weights["dep{}/block{}".format(i, j)] = block.get_layer_weight_tuples()
-        return weights
 
     def _hour_glass_forward(self, n, x):
         up1 = self.hg[n - 1][0](x)
@@ -196,12 +192,10 @@ class CPRmodel(nn.Module):
         layers = [Stage(backend_outp_feats, n_joints, n_paf, True, blocktype="standard",
                         kernel_size=kernel_size, activation=activation),
                   Stage(backend_outp_feats, n_joints, n_paf, False, blocktype=blocktype,
-                        kernel_size=kernel_size, activation=activation),
-                  Stage(backend_outp_feats, n_joints, n_paf, False, blocktype=blocktype,
                         kernel_size=kernel_size, activation=activation)]
         if not share:
             layers += [Stage(backend_outp_feats, n_joints, n_paf, False, blocktype=blocktype,
-                             kernel_size=kernel_size)] * (n_stages - 3)
+                             kernel_size=kernel_size)] * (n_stages - 2)
         self.source = layers[1]
         self.share = share
 
@@ -211,15 +205,6 @@ class CPRmodel(nn.Module):
             layers += [stage]'''
         self.stages = nn.ModuleList(layers)
 
-    def _copy_weights(self, source_block, dest_block):
-        for b_name, b_weights in dest_block.get_weights().items():
-            for i in range(HG_DEPTH):
-                for j in range(HG_NUM_BLOCKS):
-                    for layer_index, l_w_t in b_weights["dep{}/block{}".format(i, j)].items():
-                        conv_layer, _ = l_w_t
-                        _, source_weight = source_block.get_weights()[b_name]["dep{}/block{}".format(i, j)][layer_index]
-                        conv_layer.weight = source_weight
-
     def forward(self, x):
         img_feats = self.backend(x)
         cur_feats = img_feats
@@ -228,11 +213,11 @@ class CPRmodel(nn.Module):
         heatmap_outs.append(heatmap_out); paf_outs.append(paf_out)
         cur_feats = torch.cat([img_feats, heatmap_out, paf_out], 1)
 
-        for _ in range(self.n_stages - 1):
-            for i in range(2):
-                heatmap_out, paf_out = self.stages[1 + i](cur_feats)
+        for j in range(self.n_stages - 1):
+            for i in range(1):
+                heatmap_out, paf_out = self.stages[j + i + 1](cur_feats)
                 cur_feats = torch.cat([img_feats, heatmap_out, paf_out], 1)
-            heatmap_outs.append(heatmap_out); paf_outs.append(paf_out)
+                heatmap_outs.append(heatmap_out); paf_outs.append(paf_out)
 
         return heatmap_outs, paf_outs
 
@@ -254,18 +239,11 @@ class Stage(nn.Module):
                                        kernel_size=kernel_size, activation=activation)
             block_fact2 = blockFactory(inp_feats, n_paf, blocktype,
                                        kernel_size=kernel_size, activation=activation)
-
             self.block1 = block_fact1.get_block()
             self.block2 = block_fact2.get_block()
-            self.weights = {
-                "block1": block_fact1.get_weights(),
-                "block2": block_fact2.get_weights()
-            }
+
         init(self.block1)
         init(self.block2)
-
-    def get_weights(self):
-        return self.weights
 
     def get_blocks(self):
         return [self.block1, self.block2]
