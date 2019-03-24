@@ -1,6 +1,7 @@
 import numpy as np
 import random
 import cv2
+import torch
 
 sigma_inp = 7
 n = sigma_inp * 6 + 1
@@ -77,8 +78,10 @@ def resize(img, ignore_mask, keypoints, imgSize):
 def resize_hm(heatmap, hm_size):
     if np.isscalar(hm_size):
         hm_size = (hm_size, hm_size)
-    heatmap = cv2.resize(heatmap.transpose(1, 2, 0), hm_size,interpolation=cv2.INTER_CUBIC)
-    return heatmap.transpose(2, 0, 1)
+    # print(type(heatmap), heatmap.shape)
+    heatmap = np.transpose(heatmap, (1, 2, 0))
+    heatmap = cv2.resize(heatmap, hm_size,interpolation=cv2.INTER_CUBIC)
+    return np.transpose(heatmap, (2, 0,  1))
 
 
 def resize_hm_paf(heatmap, paf, ignore_mask, hm_size):
@@ -97,7 +100,6 @@ def color_augment(img, ignore_mask, keypoints, color_aug):
     return img, ignore_mask, keypoints
 
 
-
 def normalize(img):
     img = img[:, :, ::-1]
     img = (img - MEAN) / STD
@@ -106,7 +108,7 @@ def normalize(img):
 
 
 def denormalize(img):
-    img = img.transpose(1, 2, 0)
+    img = np.transpose(img, (1, 2, 0))
     img = img * STD + MEAN
     img = img[:, :, ::-1]
     return img
