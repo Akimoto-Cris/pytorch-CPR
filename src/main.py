@@ -26,7 +26,7 @@ def main():
     model, criterion_hm, criterion_paf = create_model(opt)
     model = torch.nn.DataParallel(model, device_ids=[int(index) for index in opt["env"]["device"].split(",")]).cuda() \
         if "," in opt["env"]["device"] else model.cuda()
-    if opt["env"]["loadModel"] and opt["typ"] == 'cpr':
+    if opt["env"]["loadModel"] is not None and opt["typ"] == 'cpr':
         model.load_state_dict(torch.load(opt["env"]["loadModel"]))
         print('Loaded model from ' + opt["env"]["loadModel"])
     criterion_hm = criterion_hm.cuda()
