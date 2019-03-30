@@ -23,6 +23,7 @@ class CPRmodel(nn.Module):
         assert (self.config["nStage"] > 0)
         self.n_stages = self.config["nStage"]
         self.share = self.config["share"]
+
         if "stage_weight" in self.config.keys():
             self.stage_weight = self.config["stage_weight"]
             self.super = supervision_weight(n_stages=self.n_stages)
@@ -32,6 +33,7 @@ class CPRmodel(nn.Module):
         if self.config["nStage"] > 1:
             layers += [Stage("stage2", self.config)]
         if not self.share and self.config["nStage"] > 2:
+
             layers += [Stage("stage2", self.config) for _ in range(self.config["nStage"] - 2)]
         self.stages = nn.ModuleList(layers)
 
@@ -45,6 +47,7 @@ class CPRmodel(nn.Module):
         cur_feats = torch.cat([img_feats, heatmap_out, paf_out], 1)
 
         for j in range(self.n_stages - 1):
+
             stage_idx_to_use = 1 + (j if self.share else 0)
             heatmap_out, paf_out = self.stages[stage_idx_to_use](cur_feats)
             cur_feats = torch.cat([img_feats, heatmap_out, paf_out], 1)
@@ -112,6 +115,7 @@ class Stage(nn.Module):
                 paf_layers += [block(inplanes=inplane if i == 0 else paf_chs[i - 1],
                                      outplanes=paf_outplane if i == len(paf_chs) - 1 else paf_chs[i],
                                      kernel=ks[i], stride=1, config=self.config[stage])]
+
         if "hg" not in types:
             return nn.Sequential(*hm_layers), nn.Sequential(*paf_layers)
         else:

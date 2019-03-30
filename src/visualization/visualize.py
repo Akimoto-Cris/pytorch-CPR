@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 from data_process.process_utils import denormalize, resize_hm
-
+WAIT_TIME = None
 
 def apply_mask(image, mask, color, alpha=0.5):
     for c in range(3):
@@ -20,6 +20,8 @@ def apply_heatmap(img, heatmap):
 
 def visualize_masks(img, ignore_mask):
     if ignore_mask.sum() > 0:
+        # cv2.namedWindow('masked_img')
+        # cv2.startWindowThread()
         cv2.imshow('masked_img', apply_mask(img.copy(), ignore_mask, color=(0, 0, 1)))
         cv2.waitKey()
 
@@ -30,6 +32,8 @@ def visualize_heatmap(img, heat_maps, displayname = 'heatmaps'):
     img = img.copy()
     colored = cv2.applyColorMap(heat_maps, cv2.COLORMAP_JET)
     img = cv2.addWeighted(img, 0.6, colored, 0.4, 0)
+    # cv2.namedWindow(displayname)
+    # cv2.startWindowThread()
     cv2.imshow(displayname, img)
     cv2.waitKey()
 
@@ -52,6 +56,8 @@ def visualize_keypoints(img, keypoints, body_part_map):
             y_2 = keypoint_2[1]
             if keypoint_1[2] > 0 and keypoint_2[2] > 0:
                 cv2.line(img, (x_1, y_1), (x_2, y_2), (1, 0, 0), 2)
+    # cv2.namedWindow('keypoints')
+    # cv2.startWindowThread()
     cv2.imshow('keypoints', img)
     cv2.waitKey()
 
@@ -63,6 +69,8 @@ def visualize_paf(img, pafs):
     #paf = (pafs[:,:,:].sum(axis=0)*255).astype('uint8')
     colored = cv2.applyColorMap(paf, cv2.COLORMAP_JET)
     img = cv2.addWeighted(img, 0.6, colored, 0.4, 0)
+    # cv2.namedWindow('pafs')
+    # cv2.startWindowThread()
     cv2.imshow('pafs', img)
     cv2.waitKey()
 
@@ -74,6 +82,12 @@ def visualize_output_single(img, heatmap_t, paf_t, ignore_mask_t, heatmap_o, paf
     heatmap_t = resize_hm(heatmap_t, (img.shape[1], img.shape[0]))
     paf_t = resize_hm(paf_t, (img.shape[1], img.shape[0]))
     ignore_mask = cv2.resize(ignore_mask_t, (img.shape[1], img.shape[0]))
+    cv2.namedWindow('heatmap_out')
+    cv2.namedWindow('heatmap_target')
+    cv2.namedWindow('paf_out')
+    cv2.namedWindow('paf_target')
+    cv2.namedWindow('masked_img')
+    cv2.startWindowThread()
     visualize_heatmap(img, heatmap_o, 'heatmap_out')
     visualize_heatmap(img, heatmap_t, 'heatmap_target')
     visualize_heatmap(img, paf_o, 'paf_out')
@@ -83,6 +97,12 @@ def visualize_output_single(img, heatmap_t, paf_t, ignore_mask_t, heatmap_o, paf
 
 def visualize_output(input_, heatmaps_t, pafs_t, ignore_masks_t, outputs):
     n_images = input_.shape[0]
+    cv2.namedWindow('heatmap_out')
+    cv2.namedWindow('heatmap_target')
+    cv2.namedWindow('paf_out')
+    cv2.namedWindow('paf_target')
+    cv2.namedWindow('masked_img')
+    cv2.startWindowThread()
     for i in range(n_images):
         img = input_[i].copy()
         heatmap_o = outputs[0][i].copy()

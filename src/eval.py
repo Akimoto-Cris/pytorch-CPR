@@ -4,7 +4,8 @@ import random, os
 from opts.base_opts import Opts
 from data_process.data_loader_provider import create_data_loaders
 from model.model_provider import create_model, create_optimizer
-from evaluation.eval_net import eval_net
+# from evaluation.eval_net import eval_net
+from evaluation.eval_net_single import eval_net
 from evaluation.coco import eval_COCO
 
 def main():
@@ -23,9 +24,6 @@ def main():
     # Create nn
     model, _, _ = create_model(opt)
     model = model.cuda()
-    if opt.vizModel:
-        from model.helper import visualize_net
-        visualize_net(model, opt.saveDir)
     # Get nn outputs
     outputs, indices = eval_net(test_loader, model, opt)
 

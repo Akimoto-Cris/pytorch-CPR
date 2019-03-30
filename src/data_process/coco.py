@@ -36,27 +36,27 @@ class CocoDataSet(data.Dataset):
         if self.do_augment:
             img, ignore_mask, keypoints = self.augment(img, ignore_mask, keypoints, self.opt)
         if to_resize:
-            img, ignore_mask, keypoints = resize(img, ignore_mask, keypoints, self.opt.imgSize)
-        heat_map = get_heatmap(self.coco, img, keypoints, self.opt.sigmaHM)
-        paf = get_paf(self.coco, img, keypoints, self.opt.sigmaPAF, self.opt.variableWidthPAF)
+            img, ignore_mask, keypoints = resize(img, ignore_mask, keypoints, self.opt["train"]["imgSize"])
+        heat_map = get_heatmap(self.coco, img, keypoints, self.opt["train"]["sigmaHM"])
+        paf = get_paf(self.coco, img, keypoints, self.opt["train"]["sigmaPAF"], self.opt["train"]["variableWidthPAF"])
 
         return img, heat_map, paf, ignore_mask, keypoints
 
     # global
     def augment(self, img, ignore_mask, keypoints, opts):
-        if np.random.random() < opts.flipAugProb:
+        if np.random.random() < opts["train"]["flipAugProb"]:
             img, ignore_mask, keypoints = flip(img, ignore_mask, keypoints, FLIP_INDICES)
-        img, ignore_mask, keypoints = color_augment(img, ignore_mask, keypoints, opts.colorAugFactor)
+        img, ignore_mask, keypoints = color_augment(img, ignore_mask, keypoints, opts["train"]["colorAugFactor"])
         rot_angle = 0
-        if np.random.random() < opts.rotAugProb:
-            rot_angle = np.clip(np.random.randn(),-2.0,2.0) * opts.rotAugFactor
-        img, ignore_mask, keypoints = affine_augment(img, ignore_mask, keypoints, rot_angle, opts.scaleAugFactor)
+        if np.random.random() < opts["train"]["rotAugFactor"]:
+            rot_angle = np.clip(np.random.randn(),-2.0,2.0) * opts["train"]["rotAugFactor"]
+        img, ignore_mask, keypoints = affine_augment(img, ignore_mask, keypoints, rot_angle, opts["train"]["scaleAugFactor"])
         return img, ignore_mask, keypoints
 
     def __getitem__(self, index):
         img, heat_map, paf, ignore_mask, _ = self.get_item_raw(index)
         img = normalize(img)
-        heat_map, paf, ignore_mask = resize_hm_paf(heat_map, paf, ignore_mask, self.opt.hmSize)
+        heat_map, paf, ignore_mask = resize_hm_paf(heat_map, paf, ignore_mask, self.opt["train"]["hmSize"])
         return img, heat_map, paf, ignore_mask, index
 
     def load_image(self, img_path):
@@ -65,7 +65,7 @@ class CocoDataSet(data.Dataset):
         return img
 
     def get_imgs_multiscale(self, index, scales, flip = False):
-        img, heat_map, paf, ignore_mask,_ = self.get_item_raw(index, False)
+        img, heat_map, paf, ignore_mask, _ = self.get_item_raw(index, False)
         imgs = []
         for scale in scales:
             width, height = img.shape[1], img.shape[0]
@@ -80,6 +80,15 @@ class CocoDataSet(data.Dataset):
         paf = paf.reshape(paf.shape[0], paf.shape[1], paf.shape[2] * paf.shape[3])
         paf = paf.transpose(2, 0, 1)
         return imgs, heat_map, paf, ignore_mask
+
+    def get_img(self, index, flip = False):
+        img, heat_map, paf, ignore_mask, _ = self.get_item_raw(index, True)
+        flip_img = cv2.flip(img, 1)
+        img = normalize(img)
+        if flip:
+            img = normalize(flip_img)
+        heat_map, paf, ignore_mask = resize_hm_paf(heat_map, paf, ignore_mask, self.opt["trian"]["hmSize"])
+        return img, heat_map, paf, ignore_mask
 
     def __len__(self):
         return len(self.indices)

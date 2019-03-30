@@ -39,6 +39,7 @@ class process:
         if viz_output:
             self.queue = Queue()
             self.costumer = visualize_thread(self.queue, opts)
+
             self.costumer.start()
 
         nIters = len(data_loader)
@@ -78,7 +79,6 @@ class process:
                     optimizer.zero_grad()
                     loss.backward()
                     optimizer.step()
-
                 if viz_output:
                     # self.canvas_hm.draw_image(self.hist["heatmap_t"])
                     self.canvas_paf.draw_image(self.hist["heatmap_o"])
@@ -138,7 +138,6 @@ class visualize_thread(threading.Thread):
             paf_o = paf_o[0, :3, :, :].transpose(1, 2, 0)
         cv2.imwrite(os.path.join(vis_path, "heatmap_{}.png".format(i)), heatmap_o)
         cv2.imwrite(os.path.join(vis_path, "paf_{}.png".format(i)), paf_o)
-
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
