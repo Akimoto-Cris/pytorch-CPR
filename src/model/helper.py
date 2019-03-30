@@ -13,55 +13,33 @@ def init(model, method="default"):
             elif method == "default":
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 m.weight.data.normal_(0, math.sqrt(2. / n))
+            elif method == "kaiming":
+                nn.init.kaiming_normal_(m.weight)
+                nn.init.constant_(m.bias, 0.1)
             else:
                 raise ModuleNotFoundError("Does not support init method {}.".format(method))
         elif isinstance(m, nn.BatchNorm2d):
             m.weight.data.fill_(1)
             m.bias.data.zero_()
 
-def make_standard_block(inplanes, outplanes, kernel, stride=1, config=None):
+def make_standard_block(inplanes, outplanes, kernel, stride=1, padding=0, config=None):
     layers = [nn.Conv2d(inplanes, outplanes, kernel, stride, padding=(kernel - stride) // 2)]
-    norm = config["norm"]
-    if norm == "bn":
-        layers += [nn.BatchNorm2d(outplanes, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)]
-    elif norm == "gn":
-        layers += [GroupNorm(32, outplanes, eps=1e-05, affine=True)]
+
+    if config != None:
+        if config['norm'] == "bn":
+            layers += [nn.BatchNorm2d(outplanes, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)]
+        elif config['norm'] == "gn":
+            if not config["nGroup"]:
+                config["nGroup"] = 32
+            layers += [nn.GroupNorm(config["nGroup"], outplanes, eps=1e-05, affine=True)]
     else:
-        raise NotImplementedError("norm type shoud be one of `bn`, `gn`, not {}".format(norm))
+        layers += [nn.BatchNorm2d(outplanes, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)]
+   
     layers += [nn.ReLU(inplace=True)]
     return nn.Sequential(*layers)
 
 def make_conv_layer(inplanes, outplanes, kernel, stride=1, config=None):
     return nn.Conv2d(inplanes, outplanes, kernel, stride, padding=(kernel - stride) // 2)
-
-class GroupNorm(nn.GroupNorm):
-    def __init__(self, num_features, num_groups=89, eps=1e-5, affine=True):
-        super(GroupNorm, self).__init__(num_groups, num_channels=num_features, eps=eps, affine=affine)
-        self.weight = nn.parameter.Parameter(torch.Tensor(num_features))
-        self.bias = nn.parameter.Parameter(torch.Tensor(num_features))
-
-    def forward(self, x):
-        N, C, H, W = x.size()
-        G = self.num_groups
-
-        if C % G == 0:
-            x = x.view(N, G, -1)
-            mean = x.mean(-1, keepdim=True)
-            var = x.var(-1, keepdim=True)
-            x = (x - mean) / (var + self.eps).sqrt()
-        else:
-            whole = x[:, : G * (C // G), :, :]
-            mod = x[:, G * (C // G) + 1:, :, :]
-            whole_mean = whole.mean(-1, keepdim=True)
-            whole_var = whole.var(-1, keepdim=True)
-            mod_mean = mod.mean(-1, keepdim=True)
-            mod_var = mod.var(-1, keepdim=True)
-            whole, mod = tuple(map(lambda x, mean, var: (x - mean) / (var + self.eps).sqrt(),
-                                   [whole, mod], [whole_mean, mod_mean], [whole_var, mod_var]))
-            x = torch.cat((whole, mod), axis=1)
-
-        x = x.view(N, C, H, W)
-        return x * self.weight + self.bias
 
 class Bottleneck(nn.Module):
     expansion = 2
@@ -95,9 +73,9 @@ class Bottleneck(nn.Module):
         elif self.config["norm"] == "gn":
             if not self.config["nGroup"]:
                 self.config["nGroup"] = 32
-            self.norm1 = GroupNorm(self.config["nGroup"], inplanes, eps=1e-05, affine=True)
-            self.norm2 = GroupNorm(self.config["nGroup"], outplanes // self.expansion, eps=1e-05, affine=True)
-            self.norm3 = GroupNorm(self.config["nGroup"], outplanes // self.expansion, eps=1e-05, affine=True)
+            self.norm1 = nn.GroupNorm(num_groups=self.config["nGroup"], num_channels=inplanes, eps=1e-05, affine=True)
+            self.norm2 = nn.GroupNorm(num_groups=self.config["nGroup"], num_channels=outplanes // self.expansion, eps=1e-05, affine=True)
+            self.norm3 = nn.GroupNorm(num_groups=self.config["nGroup"], num_channels=outplanes // self.expansion, eps=1e-05, affine=True)
 
     def forward(self, x):
         residual = x
@@ -126,6 +104,7 @@ class Hourglass(nn.Module):
         self.hg = self._make_hour_glass(Bottleneck if config["hg"]["block"]["type"] =="bottleneck" else make_standard_block,
                                         config["hg"]["nBlock"],
                                         inplanes, outplanes, outplanes, kernel=kernel, stride=stride)
+        init(self.hg, method=self.config["init"])
 
     def _make_residual(self, block, num_blocks, inplanes, outplanes, kernel=3, stride=1):
         layers = [block(inplanes, outplanes, kernel=kernel, stride=stride, config=self.config["hg"])] + \
@@ -156,10 +135,46 @@ class Hourglass(nn.Module):
 
         low2 = self.hg[n - 1][2](low2)
         up2 = F.interpolate(low2, scale_factor=2, mode='bilinear')
-
+        up2 = nn.ZeroPad2d(adaptive_padding(up1, up2))(up2 )
         mapping = self.hg[n - 1][3](up1)
         out = mapping + up2
         return out
 
     def forward(self, x):
         return self._hour_glass_forward(self.depth, x)
+
+def adaptive_padding(up1, up2):
+    hw1, hw2 = tuple(up1.shape[2:]), list(up2.shape[2:])
+    assert (hw1[0] >= hw2[0] and hw1[1] >= hw2[1])
+
+    single_offset = list(map(lambda x, y: (x - y) // 2, tuple(hw1), tuple(hw2)))
+    leftout = list(map(lambda x, y: (x - y) % 2, tuple(hw1), tuple(hw2)))
+
+    return (single_offset[1] + leftout[1],      # padding left
+            single_offset[1],                   # padding right
+            single_offset[0] + leftout[0],      # padding top
+            single_offset[0])                   # padding down
+
+class supervision_weight(nn.Module):
+    def __init__(self, n_stages):
+        super(supervision_weight, self).__init__()
+        self.n_stages = n_stages
+        self.exp = 2.718
+        self.block = self.make_fc()
+        self._init()
+
+    def make_fc(self):
+        return nn.Sequential(
+            nn.Linear(self.n_stages, self.n_stages),
+            nn.Linear(self.n_stages, self.n_stages),
+            nn.Softmax(self.n_stages)
+        )
+
+    def _init(self):
+        for m in self.block.modules():
+            if isinstance(m, nn.Linear):
+                m.weight.data.fill_([self.exp ** i for i in range(len(m.weight.data))])
+                m.bias.data.zero_()
+
+    def forward(self, x):
+        return self.block(x)
