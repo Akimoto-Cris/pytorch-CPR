@@ -3,6 +3,7 @@ import torch.nn.functional as F
 import math
 import torch
 import numpy as np
+from data_process.coco_process_utils import BODY_PARTS
 
 def init(model, method="default"):
     for m in model.modules():
@@ -158,53 +159,30 @@ def adaptive_padding(up1, up2):
             single_offset[0] + leftout[0],      # padding top
             single_offset[0])                   # padding down
 
-class supervision_weight(nn.Module):
-    def __init__(self, n_stages):
-        super(supervision_weight, self).__init__()
-        self.n_stages = n_stages
-        self.exp = 2.718
-        self.block = self.make_fc()
-        init(self.block, "default")
-
-    def make_fc(self):
-        return nn.Sequential(
-            nn.Linear(self.n_stages, self.n_stages),
-            nn.Linear(self.n_stages, self.n_stages),
-            nn.Softmax(self.n_stages)
-        )
-
-    def _init(self):
-        for m in self.block.modules():
-            if isinstance(m, nn.Linear):
-                m.weight.data.fill_(torch.Tensor([self.exp ** i for i in range(len(m.weight.data))]))
-                m.bias.data.zero_()
-
-    def forward(self, x):
-        return self.block(x)
-
 def root_loss(input: list):
     return [torch.sqrt(x.detach()) for x in input]
 
-def limb_aware_loss(heatmaps, pafs, joint_to_limb_heatmap_relationship):
+def limb_aware_loss(heatmaps, pafs):
     """
     fuse part score map (heatmap) with limb score map (paf)
     to let limb information better assist the prediction of part.
     Each limb heatmap is fused with
-    :param heatmaps: Tensor of shape: n_stage x N x 17 x H x W
-    :param pafs: Tensor of shape: n_stage x N x 32 x H x W
-    :return: fusion heatmap of size n_stage 32 x
+    :param heatmaps: Tensor of shape: N x 17 x H x W
+    :param pafs: Tensor of shape: N x 32 x H x W
+    :return: fusion heatmap of the same shape of pafs, torch.cuda.Tensor
     """
-    assert (heatmaps.shape[:2] == pafs.shape[:2] and heatmaps.shape[3:] == pafs.shape[3:])
+    assert (heatmaps.shape[0] == pafs.shape[0] and heatmaps.shape[2:] == pafs.shape[2:])
+    joint_to_limb_heatmap_relationship = BODY_PARTS
     limb_part_fusion_hm = np.zeros(pafs.shape)
     for limb_type in range(len(joint_to_limb_heatmap_relationship)):
         joints_src = joint_to_limb_heatmap_relationship[limb_type][0]
         joints_dis = joint_to_limb_heatmap_relationship[limb_type][1]
         limb_x_index = 2 * limb_type
         limb_y_index = 2 * limb_type + 1
-        limb_part_fusion_hm[:, :, limb_x_index, :, :] = heatmaps[:, :, joints_src, :, :] + \
-                                                        heatmaps[:, :, joints_dis, :, :] + \
-                                                        pafs[:, :, limb_x_index, :, :]
-        limb_part_fusion_hm[:, :, limb_y_index, :, :] = heatmaps[:, :, joints_src, :, :] + \
-                                                        heatmaps[:, :, joints_dis, :, :] + \
-                                                        pafs[:, :, limb_y_index, :, :]
-    return limb_part_fusion_hm
+        limb_part_fusion_hm[:, limb_x_index, :, :] = heatmaps[:, joints_src, :, :] + \
+                                                        heatmaps[:, joints_dis, :, :] + \
+                                                        pafs[:, limb_x_index, :, :]
+        limb_part_fusion_hm[:, limb_y_index, :, :] = heatmaps[:, joints_src, :, :] + \
+                                                        heatmaps[:, joints_dis, :, :] + \
+                                                        pafs[:, limb_y_index, :, :]
+    return torch.from_numpy(limb_part_fusion_hm).cuda()
