@@ -70,16 +70,18 @@ class process:
                     loss_paf_total += [criterion_paf(paf_out * allow_mask, paf_t_cuda * allow_mask) \
                                       / allow_mask.sum().detach()/heatmap.shape[0]/paf.shape[1]]
                     if opts["model"]["limb_aware"]:
+                        self.hist_fig.log(self._step, f_t=limb_aware_loss(heatmap_t_cuda * allow_mask, paf_t_cuda * allow_mask).data[0, 0])
+                        # self.hist_fig.log(self._step, f_t=paf_t_cuda.data[0, 0])
                         loss_la_total += [criterion_paf(limb_aware_loss(heatmap_out * allow_mask, paf_out * allow_mask),
-                                                      limb_aware_loss(heatmap_t_cuda * allow_mask, paf_t_cuda * allow_mask) /
-                                                      allow_mask.sum().detach() / heatmap[0].shape[0] / heatmap[0].shape[1])]
+                                                      limb_aware_loss(heatmap_t_cuda * allow_mask, paf_t_cuda * allow_mask))/
+                                                      allow_mask.sum().detach() / heatmap[0].shape[0] / heatmap[0].shape[1]]
                 if opts["model"]["stage_weight"]:
                     stage_weight_hm = root_loss(loss_hm_total)
                     stage_weight_paf = root_loss(loss_paf_total)
-                    stage_weight = [0.5 + sw_hm + sw_paf for sw_hm, sw_paf in zip(stage_weight_hm, stage_weight_paf)]
+                    stage_weight = torch.Tensor([0.5 + sw_hm + sw_paf for sw_hm, sw_paf in zip(stage_weight_hm, stage_weight_paf)]).cuda()
 
                 loss = sum(
-                    [(loss_hm + loss_paf) * sw.cuda() for loss_hm, loss_paf, sw in zip(loss_hm_total, loss_paf_total, stage_weight)])
+                    [(loss_hm + loss_paf) * sw for loss_hm, loss_paf, sw in zip(loss_hm_total, loss_paf_total, stage_weight)])
                 if opts["model"]["limb_aware"]:
                     loss += sum(loss_la_total)
                 if regularization:
@@ -96,7 +98,7 @@ class process:
                     optimizer.step()
                     if viz_output:
                         self.hist_fig.log(self._step, heatmap_o=heatmap_outputs[-1].data[0, 0])
-                        self.canvas_hm.draw_image(self.hist_fig["heatmap_o"])
+                        self.canvas_hm.draw_image(self.hist_fig["f_t"])
                         # self.canvas_paf.draw_image(self.hist["paf_o"])
                         self.queue.put((i, input_.numpy(), heatmap.numpy(), paf.numpy(), ignore_mask.numpy(), output))
 
