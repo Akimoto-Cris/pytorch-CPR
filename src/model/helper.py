@@ -171,6 +171,8 @@ def limb_aware_loss(heatmaps, pafs):
     :param pafs: Tensor of shape: N x 32 x H x W
     :return: fusion heatmap of the same shape of pafs, torch.cuda.Tensor
     """
+    heatmaps = heatmaps.detach().cpu().numpy()
+    pafs = pafs.detach().cpu().numpy()
     assert (heatmaps.shape[0] == pafs.shape[0] and heatmaps.shape[2:] == pafs.shape[2:])
     joint_to_limb_heatmap_relationship = BODY_PARTS
     limb_part_fusion_hm = np.zeros(pafs.shape)
@@ -185,4 +187,4 @@ def limb_aware_loss(heatmaps, pafs):
         limb_part_fusion_hm[:, limb_y_index, :, :] = heatmaps[:, joints_src, :, :] + \
                                                         heatmaps[:, joints_dis, :, :] + \
                                                         pafs[:, limb_y_index, :, :]
-    return torch.from_numpy(limb_part_fusion_hm).cuda()
+    return torch.from_numpy(limb_part_fusion_hm.astype(np.float32)).cuda()
