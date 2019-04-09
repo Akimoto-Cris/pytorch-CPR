@@ -19,7 +19,10 @@ def main():
     os.environ["CUDA_VISIBLE_DEVICES"] = opt["env"]["device"]
     print("Using GPU: {}".format(opt["env"]["device"]))
     # Create data loaders
-    _, test_loader = create_data_loaders(opt)
+    if opt["to_test"]:
+        _, _, test_loader = create_data_loaders(opt)
+    else:
+        _, test_loader = create_data_loaders(opt)
 
     # Create nn
     model, _, _ = create_model(opt)
@@ -27,8 +30,8 @@ def main():
     # Get nn outputs
     outputs, indices = eval_net(test_loader, model, opt)
 
-    if opt.dataset == 'coco':
-        eval_COCO(outputs, opt["env"]["data"], indices)
+    if opt["val"]["dataset"] == 'coco':
+        eval_COCO(outputs, opt["env"]["data"], indices, opt)
 
 if __name__ == '__main__':
     main()
