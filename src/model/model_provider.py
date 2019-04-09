@@ -4,6 +4,7 @@ from .CPR import CPRmodel
 import torch.nn as nn
 import torchvision.models as models
 import torch
+import numpy as np
 
 def parse_criterion(criterion):
     if criterion == 'l1':
@@ -12,16 +13,18 @@ def parse_criterion(criterion):
         return nn.MSELoss(size_average = False)
     elif criterion == 'smoooth_l1':
         return nn.SmoothL1Loss(size_average=False)
+    elif criterion == "cross_entropy":
+        return nn.CrossEntropyLoss(size_average=False)
     else:
         raise ValueError('Criterion ' + criterion + ' not supported')
 
-
+    
 def create_model(opt):
     if opt["model"]["backend"] == "vgg":
         backend = Backend(models.vgg19, use_bn=True, config=opt["model"][opt["model"]["backend"]])
         backend_feats = 128
     elif opt["model"]["backend"] == "resnet":
-        backend = Backend(models.resnet101, use_bn=True, config=opt["model"][opt["model"]["backend"]])
+        backend = Backend(models.resnet34, use_bn=True, config=opt["model"][opt["model"]["backend"]])
     else:
         raise ValueError('Model ' + opt["model"]["backend"] + ' not available.')
     model = PAFModel(backend, backend_feats, n_joints=18, n_paf=32, n_stages=7) if opt["typ"] == 'paf' else \
