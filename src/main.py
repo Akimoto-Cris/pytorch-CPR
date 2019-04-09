@@ -21,7 +21,7 @@ def main():
 
     # Create data loaders
     # Create data loaders
-    train_loader, test_loader = create_data_loaders(opt)
+    train_loader, test_loader, _ = create_data_loaders(opt)
     # Create nn
     model, criterion_hm, criterion_paf = create_model(opt)
     model = torch.nn.DataParallel(model, device_ids=[int(index) for index in opt["env"]["device"].split(",")]).cuda() \
