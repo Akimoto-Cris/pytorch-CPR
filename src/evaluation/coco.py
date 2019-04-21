@@ -4,30 +4,33 @@ import os
 import json
 
 
-def eval_COCO(outputs, dataDir, imgIds):
+def eval_COCO(outputs, dataDir, imgIds, opts):
     """Evaluate images on Coco test set
     :param outputs: list of dictionaries, the models' processed outputs
     :param dataDir: string, path to the MSCOCO data directory
     :param imgIds: list, all the image ids in the validation set
     :returns : float, the mAP score
     """
-    with open('results.json', 'w') as f:
+    with open(os.path.join(opts["env"]["saveDir"], 'results.json'), 'w') as f:
         json.dump(outputs, f)
-    annType = 'keypoints'
-    prefix = 'person_keypoints'
+    if not opts["to_test"]:
+        annType = 'keypoints'
+        prefix = 'person_keypoints'
 
-    # initialize COCO ground truth api
-    dataType = 'val2017'
-    annFile = '%s/annotations/%s_%s.json' % (dataDir, prefix, dataType)
-    cocoGt = COCO(annFile)  # load annotations
-    cocoDt = cocoGt.loadRes('results.json')  # load model outputs
+        # initialize COCO ground truth api
+        dataType = 'val2017'
+        annFile = '%s/annotations/%s_%s.json' % (dataDir, prefix, dataType)
+        cocoGt = COCO(annFile)  # load annotations
+        cocoDt = cocoGt.loadRes(os.path.join(opts["env"]["saveDir"], 'results.json'))  # load model outputs
 
-    # running evaluation
-    cocoEval = COCOeval(cocoGt, cocoDt, annType)
-    cocoEval.params.imgIds = imgIds
-    cocoEval.evaluate()
-    cocoEval.accumulate()
-    cocoEval.summarize()
-    os.remove('results.json')
-    # return Average Precision
-    return cocoEval.stats[0]
+        # running evaluation
+        cocoEval = COCOeval(cocoGt, cocoDt, annType)
+        cocoEval.params.imgIds = imgIds
+        cocoEval.evaluate()
+        cocoEval.accumulate()
+        cocoEval.summarize()
+
+        # os.remove('results.json')
+        # return Average Precision
+        return cocoEval.stats[0]
+

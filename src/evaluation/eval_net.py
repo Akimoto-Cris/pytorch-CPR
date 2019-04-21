@@ -1,27 +1,48 @@
 import os
+import scipy.stats
+import matplotlib.pyplot as plt
 import time
-from tqdm import tqdm
 import cv2
 import numpy as np
-import torch
+import torch, json
 from data_process.process_utils import resize_hm, denormalize
 from visualization.visualize import visualize_output_single
-from .post import decode_pose, append_result
-
+from .post import plot_pose_pdf
+from openpose_plus.inference.post_process import decode_pose
 
 # Typical evaluation is done on multi-scale and average across all evals is taken as output
 # These reduce the quantization error in the model
-def eval_net(data_loader, model, opts):
+def eval_net(data_loader, model, opts, ids_in_ckpt=[]):
     model.eval()
     dataset = data_loader.dataset
-    scales = [1., 0.75, 1.25]
+    scales = [1., 0.5, 0.75, 1.25, 1.5, 2.0]
+    # scales = [1.]
     assert (scales[0]==1)
     n_scales = len(scales)
-    outputs = []
-    dataset_len = 100 #len(dataset)
-    with tqdm(total=dataset_len) as t:
+    dataset_len = len(dataset)
+    # keypoints_list = []
+    runtimes = []
+
+
+    with torch.no_grad():
         for i in range(dataset_len):
-            imgs, heatmap_t, paf_t, ignore_mask_t = dataset.get_imgs_multiscale(i, scales,flip=False)
+            if dataset.indices[i] in ids_in_ckpt:
+                print("skip {}th image of image_id {}.".format(i, dataset.indices[i]))
+                continue
+
+            print(i)
+            start = time.time()
+            # imgs, heatmap_t, paf_t, ignore_mask_t = dataset.get_imgs_multiscale(i, scales, flip=False, to_resize=False)
+            if opts["to_test"]:
+                imgs, orig_shape = dataset.get_imgs_multiscale_resize(i, scales, flip=False)
+                heatmap_t = np.zeros((opts["model"]["nJoints"], opts["test"]["hmSize"], opts["test"]["hmSize"]))
+                paf_t = np.zeros((opts["model"]["nLimbs"], opts["test"]["hmSize"], opts["test"]["hmSize"]))
+                ignore_mask_t = np.zeros((opts["test"]["hmSize"], opts["test"]["hmSize"]))
+            else:
+                imgs, heatmap_t, paf_t, ignore_mask_t, orig_shape = dataset.get_imgs_multiscale_resize(i, scales, flip=False)
+            resize_factors = tuple([orig_shape[i] / imgs[0].shape[i + 1] for i in [1, 0]])
+            # resize_factors = (1, 1)
+            # print(imgs[0].shape, orig_shape,resize_factors)
             n_imgs = len(imgs)
             assert(n_imgs == n_scales)
             heights = list(map(lambda x: x.shape[1], imgs))
@@ -33,8 +54,10 @@ def eval_net(data_loader, model, opts):
                 h, w = img.shape[1], img.shape[2]
                 imgs_np[j,:,:h,:w] = img
             img_basic = imgs[0]
-            heatmap_avg = np.zeros(heatmap_t.shape)
-            paf_avg = np.zeros(paf_t.shape)
+
+            heatmap_avg_lst = []
+            paf_avg_lst = []
+            print("first loop", time.time() - start)
             for j in range(0, n_imgs):
                 imgs_torch = torch.from_numpy(imgs_np[j:j+1]).float().cuda()
                 heatmaps, pafs = model(imgs_torch)
@@ -42,16 +65,20 @@ def eval_net(data_loader, model, opts):
                 paf = pafs[-1].data.cpu().numpy()[0, :, :heights[j]//8, :widths[j]//8]
                 heatmap = resize_hm(heatmap, (widths[0], heights[0]))
                 paf = resize_hm(paf, (widths[0], heights[0]))
-                heatmap_avg += heatmap/n_imgs
-                paf_avg += paf/n_imgs
-            #visualize_output_single(img_basic, heatmap_t, paf_t, ignore_mask_t, heatmap_avg, paf_avg)
+                heatmap_avg_lst += [heatmap]
+                paf_avg_lst += [paf]
+            heatmap_avg = sum(heatmap_avg_lst)/n_imgs
+            paf_avg = sum(paf_avg_lst)/n_imgs
+            print("second loop", time.time() - start)
+            if opts["viz"]["vizOut"]:
+                visualize_output_single(img_basic, heatmap_t, paf_t, ignore_mask_t, heatmap_avg, paf_avg)
             img_basic = denormalize(img_basic)
             param = {'thre1': 0.1, 'thre2': 0.05, 'thre3': 0.5}
-            canvas, to_plot, candidate, subset = decode_pose(img_basic, param, heatmap_avg, paf_avg)
-            append_result(dataset.indices[i], subset, candidate, outputs)
-            vis_path = os.path.join(opts.saveDir, 'viz')
+            vis_path = os.path.join(opts["env"]["saveDir"], "val" if not opts["to_test"] else "test" + '_viz')
             if not os.path.exists(vis_path):
                 os.makedirs(vis_path)
-            cv2.imwrite(vis_path+'/{}.png'.format(i), to_plot)
-            t.update()
-    return outputs, dataset.indices[:dataset_len]
+            outputs = decode_pose(img_basic, param, heatmap_avg, paf_avg, opts, dataset.indices[i], os.path.join(vis_path, f"{i}.pdf"))
+            final = time.time()-start
+            print("both loops took ", final)
+
+            yield outputs, i
