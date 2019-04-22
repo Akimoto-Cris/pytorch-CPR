@@ -107,9 +107,9 @@ CocoPairsRender = CocoPairs[:-2]
 #     (6, 7), (8, 9), (10, 11), (28, 29), (30, 31), (34, 35), (32, 33), (36, 37), (18, 19), (26, 27)
 #  ]  # = 19
 
-CocoColors = [[255, 0, 0], [255, 85, 0], [255, 170, 0], [255, 255, 0], [170, 255, 0], [85, 255, 0], [0, 255, 0],
-              [0, 255, 85], [0, 255, 170], [0, 255, 255], [0, 170, 255], [0, 85, 255], [0, 0, 255], [85, 0, 255],
-              [170, 0, 255], [255, 0, 255], [255, 0, 170], [255, 0, 85]]
+CocoColors = ['#cd87ff', '#cd87ff', '#cd87ff', '#cd87ff', '#cd87ff', '#cd87ff', '#cd87ff',
+              '#74c8f9', '#74c8f9', '#74c8f9', '#74c8f9', '#74c8f9', '#74c8f9', '#74c8f9',
+              '#a2805b', '#a2805b', '#a2805b', '#a2805b']
 
 
 def read_imgfile(path, width, height, data_format='channels_last'):
@@ -203,9 +203,8 @@ def measure(f, name=None):
 
 def draw_humans(npimg, humans, save_path):
     npimg = np.copy(npimg)
-    image_h, image_w = npimg.shape[:2]
     centers = {}
-    plt.figure(figsize=(10, 10))
+    plt.figure(figsize=(15, 15))
     plt.axis('off')
     plt.imshow(npimg[:, :, ::-1])
     ax = plt.gca()
@@ -217,7 +216,7 @@ def draw_humans(npimg, humans, save_path):
             if i not in human.body_parts.keys():
                 continue
             body_part = human.body_parts[i]
-            center = (int(body_part.x * image_w + 0.5), int(body_part.y * image_h + 0.5))
+            center = [int(body_part.x + 0.5), int(body_part.y + 0.5)]
             centers[i] = center
             # cv2.circle(npimg, center, 3, CocoColors[i], thickness=3, lineType=8, shift=0)
             plt.plot(center[0], center[1], 'o', markersize=5, markerfacecolor='g',
@@ -228,13 +227,16 @@ def draw_humans(npimg, humans, save_path):
             if pair[0] not in human.body_parts.keys() or pair[1] not in human.body_parts.keys():
                 continue
             # cv2.line(npimg, centers[pair[0]], centers[pair[1]], CocoColors[pair_order], 3)
-            plt.plot(centers[pair[0]], centers[pair[1]], linewidth=3, color=CocoColors[pair_order])
+            plt.plot(np.array(centers[pair[1]]),
+                     np.array(centers[pair[0]]),
+                     linewidth=3, color=CocoColors[pair_order])
     plt.savefig(save_path, bbox_inches='tight', dpi=100)
     plt.close()
 
 
 
 def plot_humans(image, heatMat, pafMat, humans, name):
+    import matplotlib.pyplot as plt
     fig = plt.figure()
     a = fig.add_subplot(2, 3, 1)
 

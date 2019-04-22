@@ -41,7 +41,7 @@ def get_peak_map(param, img):
     threshold (param['thre1'])
     :param img: Input image (2d array) where we want to find peaks
     :return: 2d np.array containing the [x,y] coordinates of each peak found
-    in the image
+    in the image and one-shot peak map with the same shape of input image
     """
 
     '''
@@ -50,20 +50,14 @@ def get_peak_map(param, img):
                        [False,  True, False]], dtype=bool)
     '''
     ret = np.zeros(img.shape)
-    for i in range(len(img)):
-        blured_img = gaussian_filter(img[i, :, :], sigma=3.0)
-        peaks_binary = (maximum_filter(blured_img,
+    for i in range(img.shape[-1]):
+        peaks_binary = (maximum_filter(img[:, :, i],
                                        footprint=generate_binary_structure(2, 1)       # mask within the filter
-                                       # array([[False,  True, False],
-                                       #        [ True,  True,  True],
-                                       #        [False,  True, False]], dtype=bool)
-                                       ) == img
-                       ) * (img > param['thre1'])
-        # Note reverse ([::-1]): we return [[x y], [x y]...] instead of [[y x], [y
-        # x]...]
-        peaks = np.array(np.nonzero(peaks_binary)[::-1]).T       # nonzero return array-like of INDICES of nonzero entries
+                                       ) == img[:, :, i])
+        peaks = np.array(np.nonzero(peaks_binary)).T       # nonzero return array-like of INDICES of nonzero entries
         for peak in peaks:
-            ret[(i,) + tuple(peak)] = img[(i,) + tuple(peak)]
+            # print(tuple(peak) + (i,))
+            ret[tuple(peak) + (i,)] = img[tuple(peak) + (i,)]
     return ret
 
 def upsample(img, upsample_size):
@@ -120,7 +114,7 @@ class BodyPart:
 
 def estimate_paf(peaks, heat_mat, paf_mat):
     from .pafprocess import pafprocess  # TODO: don't depend on it
-    pafprocess.process_paf(peaks, heat_mat, paf_mat)
+    pafprocess.process_paf(peaks.astype(np.float32), heat_mat.astype(np.float32), paf_mat.astype(np.float32))
 
     humans = []
     for human_id in range(pafprocess.get_num_humans()):
@@ -134,11 +128,12 @@ def estimate_paf(peaks, heat_mat, paf_mat):
 
             is_added = True
             human.body_parts[part_idx] = BodyPart('%d-%d' % (human_id, part_idx), part_idx,
-                                                  float(pafprocess.get_part_x(c_idx)) / heat_mat.shape[1],
-                                                  float(pafprocess.get_part_y(c_idx)) / heat_mat.shape[0],
+                                                  float(pafprocess.get_part_x(c_idx)),
+                                                  float(pafprocess.get_part_y(c_idx)),
                                                   pafprocess.get_part_score(c_idx))
 
         if is_added:
+            print(human)
             human.score = pafprocess.get_score(human_id)
             humans.append(human)
     return humans
@@ -169,8 +164,8 @@ class PostProcessor(object):
         peaks = get_peak_map(self.param, heatmap)
         pafmap= upsample(pafmap_input, self.origin_size)
 
-        humans = estimate_paf(peaks[0], heatmap[0], pafmap[0])
-        return humans, heatmap[0], pafmap[0]
+        humans = estimate_paf(peaks, heatmap, pafmap)
+        return humans, heatmap, pafmap
 
 
 def decode_human(image_id, humans, img_size):
