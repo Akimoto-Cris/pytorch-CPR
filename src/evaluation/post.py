@@ -5,8 +5,8 @@ import matplotlib.cm
 import numpy as np
 from scipy.ndimage.filters import gaussian_filter, maximum_filter
 from scipy.ndimage.morphology import generate_binary_structure
+import matplotlib.pyplot as plt
 from data_process.coco_process_utils import BODY_PARTS
-
 
 # It is better to use 0.1 as threshold when evaluation, but 0.3 for demo
 # purpose.
@@ -288,15 +288,40 @@ def group_limbs_of_same_person(connected_limbs, joint_list):
         joint_src_type, joint_dst_type = joint_to_limb_heatmap_relationship[limb_type]
 
         for limb_info in connected_limbs[limb_type]:
-            person_assoc_idx = []
+            person_assoc_idx = [-1] * 2
+            found = 0
+            flag = [False] * 2      # for comparison between duplicates
+            for person, person_limbs in enumerate(person_to_joint_assoc):
+                if person_limbs[joint_src_type] == limb_info[0]:
+                    if not flag[0]:
+                        flag[0] = found
+                        person_assoc_idx[found] = person
+                        flag[0] = True
+                        found += 1
+                    else:
+                        idx = person_assoc_idx[flag[0]]
+                        if person_to_joint_assoc[idx][-2] < person_limbs[-2]:
+                            person_assoc_idx[flag[0]] = person
+                if person_limbs[joint_dst_type] == limb_info[1]:
+                    if not flag[1]:
+                        flag[1] = found
+                        person_assoc_idx[found] = person
+                        flag[1] = True
+                        found += 1
+                    else:
+                        idx = person_assoc_idx[flag[1]]
+                        if person_to_joint_assoc[idx][-2] < person_limbs[-2]:
+                            person_assoc_idx[flag[1]] = person
+
+            """flag = [False] * 
             for person, person_limbs in enumerate(person_to_joint_assoc):
                 if person_limbs[joint_src_type] == limb_info[0] or person_limbs[joint_dst_type] == limb_info[1]:
-                    person_assoc_idx.append(person)
+                    person_assoc_idx.append(person)"""
 
             # If one of the joints has been associated to a person, and either
             # the other joint is also associated with the same person or not
             # associated to anyone yet:
-            if len(person_assoc_idx) == 1:
+            if found == 1:
                 person_limbs = person_to_joint_assoc[person_assoc_idx[0]]
                 # If the other joint is not associated to anyone yet,
                 if person_limbs[joint_dst_type] != limb_info[1]:
@@ -308,7 +333,7 @@ def group_limbs_of_same_person(connected_limbs, joint_list):
                     # + score of connecting joint_src with joint_dst)
                     person_limbs[-2] += joint_list[limb_info[1]
                                                        .astype(int), 2] + limb_info[2]
-            elif len(person_assoc_idx) == 2:  # if found 2 and disjoint, merge them
+            elif found == 2:  # if found 2 and disjoint, merge them
                 person1_limbs = person_to_joint_assoc[person_assoc_idx[0]]
                 person2_limbs = person_to_joint_assoc[person_assoc_idx[1]]
                 membership = ((person1_limbs >= 0) & (person2_limbs >= 0))[:-2]
@@ -351,7 +376,6 @@ def group_limbs_of_same_person(connected_limbs, joint_list):
     # the remaining people to be deleted!)
     for index in people_to_delete[::-1]:
         person_to_joint_assoc.pop(index)
-
     # Appending items to a np.array can be very costly (allocating new memory, copying over the array, then adding new row)
     # Instead, we treat the set of people as a list (fast to append items) and
     # only convert to np.array at the end
@@ -359,14 +383,14 @@ def group_limbs_of_same_person(connected_limbs, joint_list):
 
 
 def plot_pose(img_orig, joint_list, person_to_joint_assoc, bool_fast_plot=True, plot_ear_to_shoulder=False):
-    canvas = (img_orig.copy()*255).astype('uint8')  # Make a copy so we don't modify the original image
+    canvas = (img_orig.copy()).astype('uint8')  # Make a copy so we don't modify the original image
 
     # to_plot is the location of all joints found overlaid on top of the
     # original image
     to_plot = canvas.copy() if bool_fast_plot else cv2.addWeighted(
         img_orig, 0.3, canvas, 0.7, 0)
 
-    limb_thickness = 4
+    limb_thickness = 3
     # Last 2 limbs connect ears with shoulders and this looks very weird.
     # Disabled by default to be consistent with original rtpose output
     which_limbs_to_plot = NUM_LIMBS
@@ -409,6 +433,55 @@ def plot_pose(img_orig, joint_list, person_to_joint_assoc, bool_fast_plot=True, 
 
     return to_plot, canvas
 
+def plot_pose_pdf(img_orig, joint_list, person_to_joint_assoc, save_path, plot_ear_to_shoulder=False):
+    """
+    rewrite plot_pose of returning a plt-pdf version output file
+    :param img_orig:
+    :param joint_list: n_peaks x 5 (x, y, score, idx, joint_type)
+    :param person_to_joint_assoc: n_person x (n_Joint + 2)
+    :param plot_ear_to_shoulder:
+    :return:
+    """
+    colors = {(0, 1): '#cd87ff', (0, 2): '#cd87ff', (0, 5): '#cd87ff', (1, 3): '#cd87ff', (2, 4): '#cd87ff',
+              (0, 6): '#74c8f9', (4, 6): '#74c8f9', (5, 6): '#feff95', (5, 7): '#74c8f9', (5, 11): '#feff95',
+              (6, 8): '#74c8f9', (6, 12): '#feff95', (7, 9): '#74c8f9', (8, 10): '#74c8f9', (11, 12): '#feff95',
+              (11, 13): '#a2805b', (12, 14): '#a2805b', (13, 15): '#a2805b', (14, 16): '#a2805b'}
+    plt.figure(figsize=(10, 10))
+    plt.axis('off')
+    plt.imshow(img_orig[:, :, ::-1])
+    ax = plt.gca()
+    ax.set_autoscale_on(False)
+    which_limbs_to_plot = NUM_LIMBS
+
+    for limb_type in range(which_limbs_to_plot):
+        for person_joint_info in person_to_joint_assoc:
+            limb = joint_to_limb_heatmap_relationship[limb_type]
+            joint_indices = person_joint_info[[limb[0], limb[1]]].astype(
+                int)
+            if -1 in joint_indices:
+                # Only draw actual limbs (connected joints), skip if not
+                # connected
+                continue
+            # joint_coords[:,0] represents Y coords of both joints;
+            # joint_coords[:,1], X coords
+            joint_coords = joint_list[joint_indices, 0:2]
+            plt.plot(joint_coords[:, 0], joint_coords[:, 1], linewidth=3, color=colors[limb])
+            for kk in range(2):
+                if limb[kk] in [1,3,5,7,9,11,13,15]:
+                    # these are the indices of the left keypoints (in red)
+                    plt.plot(joint_coords[kk][0], joint_coords[kk][1], 'o', markersize=5, markerfacecolor='r',
+                                                      markeredgecolor='r', markeredgewidth=3)
+
+                elif limb[kk] in [2,4,6,8,10,12,14,16]:
+                    # these are the indices of the right keypoints (in green)
+                    plt.plot(joint_coords[kk, 0], joint_coords[kk][1], 'o', markersize=5, markerfacecolor='g',
+                                                  markeredgecolor='g', markeredgewidth=3)
+                else:
+                    # these are the indices of the remaining keypoints (in blue)
+                    plt.plot(joint_coords[kk, 0], joint_coords[kk][1], 'o', markersize=5, markerfacecolor='b',
+                                                      markeredgecolor='b', markeredgewidth=3)
+    plt.savefig(save_path, bbox_inches='tight', dpi=50)
+    plt.close()
 
 def decode_pose(img_orig, param, heatmaps, pafs):
     heatmaps = heatmaps.transpose(1,2,0)
@@ -438,13 +511,10 @@ def decode_pose(img_orig, param, heatmaps, pafs):
         connected_limbs, joint_list)
 
 
-    # (Step 4): plot results
-    to_plot, canvas = plot_pose(img_orig, joint_list, person_to_joint_assoc)
-
-    return to_plot, canvas, joint_list, person_to_joint_assoc
+    return joint_list, person_to_joint_assoc
 
 
-def append_result(image_id, person_to_joint_assoc, joint_list, results):
+def append_result(image_id, person_to_joint_assoc, joint_list, resize_factors=(1., 1.)):
     """Build the outputs to be evaluated
     :param image_id: int, the id of the current image
     :param person_to_joint_assoc: numpy array of joints associations
@@ -452,16 +522,15 @@ def append_result(image_id, person_to_joint_assoc, joint_list, results):
     :param outputs: list of dictionaries with the following keys: image_id,
                     category_id, keypoints, score
     """
-
+    results = []
     for ridxPred in range(len(person_to_joint_assoc)):
         one_result = {
-            "image_id": 0,
+            "image_id": image_id,
             "category_id": 1,
             "keypoints": [],
             "score": 0
         }
 
-        one_result["image_id"] = image_id
         keypoints = np.zeros((17, 3))
 
         for part in range(17):
@@ -474,12 +543,11 @@ def append_result(image_id, person_to_joint_assoc, joint_list, results):
                 keypoints[part, 2] = 0
 
             else:
-                keypoints[part, 0] = joint_list[index, 0] + 0.5
-                keypoints[part, 1] = joint_list[index, 1] + 0.5
+                keypoints[part, 0] = joint_list[index, 0] * resize_factors[0] + 0.5
+                keypoints[part, 1] = joint_list[index, 1] * resize_factors[1] + 0.5
                 keypoints[part, 2] = 1
 
-        one_result["score"] = person_to_joint_assoc[ridxPred, -2] * \
-            person_to_joint_assoc[ridxPred, -1]
+        one_result["score"] = person_to_joint_assoc[ridxPred, -2] * person_to_joint_assoc[ridxPred, -1]
         one_result["keypoints"] = list(keypoints.reshape(51))
-
-        results.put(one_result)
+        results.append(one_result)
+    return results
