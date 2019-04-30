@@ -4,6 +4,7 @@ import math
 import torch
 import numpy as np
 from data_process.coco_process_utils import BODY_PARTS
+from cv2 import resize
 
 def init(model, method="default"):
     for m in model.modules():
@@ -139,7 +140,9 @@ class Hourglass(nn.Module):
 
         low2 = self.hg[n - 1][2](low2)
         up2 = F.interpolate(low2, scale_factor=2, mode='bilinear')
-        up2 = nn.ZeroPad2d(adaptive_padding(up1, up2))(up2 )
+        # up2 = nn.ZeroPad2d(adaptive_padding(up1, up2))(up2)
+        if up1.shape != up2.shape:
+            up2 = RoiPool(up1)(up2)
         mapping = self.hg[n - 1][3](up1)
         out = mapping + up2
         return out
@@ -147,17 +150,45 @@ class Hourglass(nn.Module):
     def forward(self, x):
         return self._hour_glass_forward(self.depth, x)
 
-def adaptive_padding(up1, up2):
-    hw1, hw2 = tuple(up1.shape[2:]), list(up2.shape[2:])
-    assert (hw1[0] >= hw2[0] and hw1[1] >= hw2[1])
+class RoiPool(nn.Module):
+    def __init__(self, reference_tensor, method="resize"):
+        super(RoiPool, self).__init__()
+        self.up1 = reference_tensor
+        self.output_shape = reference_tensor.shape[2:]
+        assert len(list(self.output_shape)) == 2
+        self.method = method
 
-    single_offset = list(map(lambda x, y: (x - y) // 2, tuple(hw1), tuple(hw2)))
-    leftout = list(map(lambda x, y: (x - y) % 2, tuple(hw1), tuple(hw2)))
+    @staticmethod
+    def adaptive_padding(up1, up2):
+        hw1, hw2 = tuple(up1.shape[2:]), list(up2.shape[2:])
+        assert (hw1[0] >= hw2[0] and hw1[1] >= hw2[1])
 
-    return (single_offset[1] + leftout[1],      # padding left
-            single_offset[1],                   # padding right
-            single_offset[0] + leftout[0],      # padding top
-            single_offset[0])                   # padding down
+        single_offset = list(map(lambda x, y: (x - y) // 2, tuple(hw1), tuple(hw2)))
+        leftout = list(map(lambda x, y: (x - y) % 2, tuple(hw1), tuple(hw2)))
+
+        return (single_offset[1] + leftout[1],  # padding left
+                single_offset[1],  # padding right
+                single_offset[0] + leftout[0],  # padding top
+                single_offset[0])  # padding down
+
+    def forward(self, input_tensor):
+        """
+        :param input: [batchsize, C, H, W]
+        :return: resized input
+        """
+        if self.method == "resize":
+            _input = input_tensor.permute(0, 2, 3, 1).cpu().data.numpy()    # convert to channel last
+            outputs = [resize(_input[i, :, :, :], self.output_shape[::-1]) for i in range(_input.shape[0])]
+            output_tensor = torch.from_numpy(np.stack(outputs, 0)).permute(0, 3, 1, 2).cuda()
+            assert list(output_tensor.shape) == list(input_tensor.shape[:2]) + list(self.output_shape), \
+            f"output_tensor_shape: {output_tensor.shape}, input_shape: {input_tensor.shape}, supposed: {self.output_shape}"
+        else:   # "zeropadding"
+            output_tensor = nn.ZeroPad2d(self.adaptive_padding(self.up1, input_tensor))(input_tensor)
+        return output_tensor
+
+    def __call__(self, input):
+        return self.forward(input)
+
 
 def root_loss(input: list):
     return [torch.sqrt(x.detach()) for x in input]
