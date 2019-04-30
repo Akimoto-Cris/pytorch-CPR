@@ -6,10 +6,11 @@ from data_process.process_utils import resize_hm, denormalize
 from visualization.visualize import visualize_output_single
 from .post import plot_pose_pdf, decode_pose, append_result
 from openpose_plus.inference.post_process import decode_pose as openpose_decode_pose
+import torch.multiprocessing as mp
 
 # Typical evaluation is done on multi-scale and average across all evals is taken as output
 # These reduce the quantization error in the model
-def eval_net(data_loader, model, opts, ids_in_ckpt=[]):
+def eval_net(data_loader, model, opts, ids_in_ckpt=[], fraction=[0, 0.3]):
     model.eval()
     dataset = data_loader.dataset
     scales = [1., 0.5, 1.25, 1.5, 1.75, 2.0]
@@ -21,7 +22,7 @@ def eval_net(data_loader, model, opts, ids_in_ckpt=[]):
     runtimes = []
 
     with torch.no_grad():
-        for i in range(dataset_len):
+        for i in range(int(dataset_len * fraction[0]), int(dataset_len * fraction[1])):
             if dataset.indices[i] in ids_in_ckpt:
                 print(f"skip {i}th image of image_id {dataset.indices[i]}.")
                 continue
