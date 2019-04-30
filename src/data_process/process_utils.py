@@ -1,6 +1,7 @@
 import numpy as np
 import random
 import cv2
+import torch
 
 sigma_inp = 7
 n = sigma_inp * 6 + 1
@@ -49,7 +50,7 @@ def DrawGaussian(img, pt, sigma):
     img_x = [max(0, ul[0]), min(br[0], img.shape[1])]
     img_y = [max(0, ul[1]), min(br[1], img.shape[0])]
 
-    img[img_y[0]:img_y[1], img_x[0]:img_x[1]] = g[g_y[0]:g_y[1], g_x[0]:g_x[1]]
+    img[img_y[0]:img_y[1], img_x[0]:img_x[1]] += g[g_y[0]:g_y[1], g_x[0]:g_x[1]]
     return img
 
 
@@ -67,18 +68,22 @@ def flip(img, ignore_mask, keypoints, flip_indices):
 
 def resize(img, ignore_mask, keypoints, imgSize):
     width, height = img.shape[0], img.shape[1]
-    img = cv2.resize(img, (imgSize, imgSize))
-    ignore_mask = cv2.resize( ignore_mask, (imgSize, imgSize))
-    keypoints[:, :, 0] = keypoints[:, :, 0] * imgSize / height
-    keypoints[:, :, 1] = keypoints[:, :, 1] * imgSize / width
+    if isinstance(imgSize, int):
+        imgSize = (imgSize, imgSize)
+    img = cv2.resize(img, imgSize)
+    ignore_mask = cv2.resize(ignore_mask, imgSize)
+    keypoints[:, :, 0] = keypoints[:, :, 0] * imgSize[0] / height
+    keypoints[:, :, 1] = keypoints[:, :, 1] * imgSize[1] / width
     return img, ignore_mask, keypoints
 
 
 def resize_hm(heatmap, hm_size):
     if np.isscalar(hm_size):
         hm_size = (hm_size, hm_size)
-    heatmap = cv2.resize(heatmap.transpose(1, 2, 0), hm_size,interpolation=cv2.INTER_CUBIC)
-    return heatmap.transpose(2, 0, 1)
+    # print(type(heatmap), heatmap.shape)
+    heatmap = np.transpose(heatmap, (1, 2, 0))
+    heatmap = cv2.resize(heatmap, hm_size,interpolation=cv2.INTER_CUBIC)
+    return np.transpose(heatmap, (2, 0,  1))
 
 
 def resize_hm_paf(heatmap, paf, ignore_mask, hm_size):
@@ -97,7 +102,6 @@ def color_augment(img, ignore_mask, keypoints, color_aug):
     return img, ignore_mask, keypoints
 
 
-
 def normalize(img):
     img = img[:, :, ::-1]
     img = (img - MEAN) / STD
@@ -106,7 +110,7 @@ def normalize(img):
 
 
 def denormalize(img):
-    img = img.transpose(1, 2, 0)
+    img = np.transpose(img, (1, 2, 0))
     img = img * STD + MEAN
     img = img[:, :, ::-1]
     return img

@@ -4,7 +4,8 @@ import numpy as np
 from .process_utils import DrawGaussian
 
 # COCO typical constants
-MIN_KEYPOINTS = 5
+MIN_KEYPOINTS = 2
+# MIN_KEYPOINTS = 5
 MIN_AREA = 32 * 32
 
 # Non traditional body parts
@@ -24,16 +25,38 @@ BODY_PARTS = [
     (11,13), # left waist - left knee
     (12,14), # right waise - right knee
     (13,15), # left knee - left foot
-    (14,16)  # right knee - right foot
+    (14,16), # right knee - right foot
+    # (3, 5),  # left ear - left shoulder
+    # (4, 6),  # right ear - right shoulder
 ]
-
+# With neck
+_BODY_PARTS = [
+    (0, 1),  # nose - left eye
+    (0, 2),  # nose - right eye
+    (1, 3),  # left eye - left ear
+    (2, 4),  # right eye - right ear
+    (17, 5),  # neck - left shoulder
+    (17, 6),  # neck - right shoulder
+    (5, 7),  # left shoulder - left elbow
+    (6, 8),  # right shoulder - right elbow
+    (7, 9),  # left elbow - left hand
+    (8, 10),  # right elbow - right hand
+    (17, 11),  # neck - left waist
+    (17, 12),  # neck - right waist
+    (11, 13),  # left waist - left knee
+    (12, 14),  # right waise - right knee
+    (13, 15),  # left knee - left foot
+    (14, 16),  # right knee - right foot
+    (0, 17)  # nose - neck
+]
 FLIP_INDICES = [(1,2), (3,4), (5,6), (7,8), (9,10), (11,12), (13,14), (15,16)]
 FLIP_INDICES_PAF = [(0,1), (2,3), (4,5), (6,7), (8,9), (10,11), (12,13), (14,15)]
 
-
 def check_annot(annot):
-    return annot['num_keypoints'] >= MIN_KEYPOINTS and annot['area'] > MIN_AREA and not annot['iscrowd'] == 1
-
+    return annot['num_keypoints'] >= MIN_KEYPOINTS and \
+           annot['area'] > MIN_AREA and \
+           not annot['iscrowd'] == 1 and \
+           np.sum(np.array(annot["keypoints"])[2::3] > 0) >= MIN_KEYPOINTS
 
 def get_heatmap(coco, img, keypoints, sigma):
     n_joints = keypoints.shape[1]
@@ -64,7 +87,7 @@ def get_paf(coco, img, keypoints, sigma_paf, variable_width):
                 if l>1e-2:
                     sigma = sigma_paf
                     if variable_width:
-                        sigma = sigma_paf *  l * 0.025
+                        sigma = sigma_paf * l * 0.025
                     v = part_line_segment/l
                     v_per = v[1], -v[0]
                     x, y = np.meshgrid(np.arange(img.shape[1]), np.arange(img.shape[0]))
@@ -81,10 +104,26 @@ def get_paf(coco, img, keypoints, sigma_paf, variable_width):
     out_pafs = out_pafs/(n_person_part + 1e-8)
     return out_pafs
 
+def add_neck(keypoints):
+    right_shoulder = keypoints[6, :]
+    left_shoulder = keypoints[5, :]
+    neck = np.zeros(3)
+    if right_shoulder[2] > 0 and left_shoulder[2] > 0:
+        neck = (right_shoulder + left_shoulder) / 2
+        neck[2] = 2
+
+    neck = neck.reshape(1, len(neck))
+    neck = np.round(neck)
+    keypoints = np.vstack((keypoints,neck))
+
+    return keypoints
+
 def get_keypoints(coco, img, annots):
     keypoints = []
     for annot in annots:
-        keypoints.append(np.array(annot['keypoints']).reshape(-1, 3))
+        person_keypoints = np.array(annot['keypoints']).reshape(-1, 3)
+        # person_keypoints = add_neck(person_keypoints)
+        keypoints.append(person_keypoints)
     return np.array(keypoints)
 
 def get_ignore_mask(coco, img, annots):
@@ -103,7 +142,6 @@ def get_ignore_mask(coco, img, annots):
             ignore_mask = ignore_mask | (mask & ~mask_union)
 
     return ignore_mask.astype('uint8')
-
 
 def clean_annot(coco, data_path, split):
     ids_path = os.path.join(data_path, split + '_ids.pkl')
@@ -125,7 +163,7 @@ def clean_annot(coco, data_path, split):
             if len(annots) > 0:
                 indices[valid_count] = indices_tmp[i]
                 valid_count += 1
-            if i%100==0:
+            if i % 100 == 0:
                 print(i)
         indices = indices[:valid_count]
         print('Saving filtered annotations for {} to {}'.format(split, ids_path))
